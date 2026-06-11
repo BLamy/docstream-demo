@@ -102,14 +102,11 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
   }
 
   if (sub === "/me" && req.method === "GET") {
-    const token = bearerOrCookieToken(req)
-    if (!token) return json({ error: "not authenticated" }, 401)
-    try {
-      const { payload } = await verifyToken(token)
-      return json({ sub: payload.sub, exp: payload.exp })
-    } catch {
-      return json({ error: "invalid session" }, 401)
-    }
+    const session = await ensureSession(req)
+    if (session.failed || !session.sub) return json({ error: "not authenticated" }, 401)
+    const res = json({ sub: session.sub })
+    for (const c of session.cookies) res.headers.append("set-cookie", c)
+    return res
   }
 
   if (sub === "/logout" && req.method === "POST") {
@@ -122,21 +119,72 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
   return json({ error: "not found", path }, 404)
 }
 
-async function authenticate(req: Request): Promise<Response | null> {
-  if (AUTH_DISABLED) return null
+interface Session {
+  failed?: Response
+  /** Set-Cookie headers to append to the response (after a silent refresh). */
+  cookies: string[]
+  sub?: string
+}
+
+// When a refresh succeeds with rotation, the request still carries the old
+// refresh cookie — later lookups in the same request must see the new one.
+const refreshedTokens = new WeakMap<Request, string>()
+
+/**
+ * Validates the session, silently refreshing the access token with the
+ * refresh-token grant when it is missing or expired.
+ */
+async function ensureSession(req: Request): Promise<Session> {
+  if (AUTH_DISABLED) return { cookies: [] }
+
   const token = bearerOrCookieToken(req)
-  if (!token) return json({ error: "missing bearer token" }, 401)
-  try {
-    await verifyToken(token)
-    return null
-  } catch {
-    return json({ error: "invalid token" }, 401)
+  if (token) {
+    try {
+      const { payload } = await verifyToken(token)
+      return { cookies: [], sub: String(payload.sub) }
+    } catch {
+      /* expired/invalid — fall through to refresh */
+    }
   }
+
+  const refresh = cookieValue(req, REFRESH_COOKIE)
+  if (refresh && AUTH0_CLIENT_ID && AUTH0_CLIENT_SECRET) {
+    const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: AUTH0_CLIENT_ID,
+        client_secret: AUTH0_CLIENT_SECRET,
+        refresh_token: refresh,
+      }),
+    })
+    if (res.ok) {
+      const body = (await res.json()) as {
+        access_token: string
+        refresh_token?: string
+        expires_in?: number
+      }
+      try {
+        const { payload } = await verifyToken(body.access_token)
+        const cookies = [setCookie(COOKIE, body.access_token, body.expires_in ?? 86400)]
+        if (body.refresh_token) {
+          cookies.push(setCookie(REFRESH_COOKIE, body.refresh_token, 30 * 86400))
+          refreshedTokens.set(req, body.refresh_token)
+        }
+        return { cookies, sub: String(payload.sub) }
+      } catch {
+        /* refreshed token failed verification — treat as unauthenticated */
+      }
+    }
+  }
+
+  return { failed: json({ error: "missing bearer token" }, 401), cookies: [] }
 }
 
 /** GitHub access token for the logged-in user, via Auth0 Token Vault. */
 async function githubToken(req: Request): Promise<string> {
-  const refresh = cookieValue(req, REFRESH_COOKIE)
+  const refresh = refreshedTokens.get(req) ?? cookieValue(req, REFRESH_COOKIE)
   if (!refresh) {
     throw new GithubNotConnectedError(
       "no refresh token in session — log in again (offline_access)"
@@ -242,12 +290,16 @@ export default async (req: Request, _context: Context) => {
     return handleGithub(req, path)
   }
 
-  const unauthorized = await authenticate(req)
-  if (unauthorized) return unauthorized
+  const session = await ensureSession(req)
+  if (session.failed) return session.failed
 
-  if (path.startsWith("/github")) return handleGithub(req, path)
+  const res = path.startsWith("/github")
+    ? await handleGithub(req, path)
+    : json({ error: "not found", path }, 404)
 
-  return json({ error: "not found", path }, 404)
+  // Propagate any silently-refreshed session cookies.
+  for (const c of session.cookies) res.headers.append("set-cookie", c)
+  return res
 }
 
 export const config: Config = {

@@ -156,13 +156,13 @@ export default function App() {
 
   const activeOwner = owners.find((o) => o.login === owner) ?? owners[0] ?? null
 
+  // No query: show the active owner's repos. With a query: search EVERY repo
+  // the user can access, across all owners.
+  const searching = search.trim().length > 0
   const repos = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return allRepos.filter((r) => {
-      const [repoOwner, name] = r.split("/")
-      if (activeOwner && repoOwner !== activeOwner.login) return false
-      return !q || name.toLowerCase().includes(q)
-    })
+    if (q) return allRepos.filter((r) => r.toLowerCase().includes(q))
+    return allRepos.filter((r) => !activeOwner || r.split("/")[0] === activeOwner.login)
   }, [allRepos, activeOwner, search])
 
   const tree = useQuery({
@@ -334,8 +334,9 @@ export default function App() {
             </div>
           )}
           {repos.map((r) => {
-            const name = r.split("/")[1]
+            const [repoOwner, name] = r.split("/")
             const active = r === repo
+            const foreign = searching && repoOwner !== activeOwner?.login
             return (
               <div key={r}>
                 <button
@@ -349,6 +350,7 @@ export default function App() {
                   )}
                   <GitBranch className="size-3.5 shrink-0" />
                   <span className="truncate">{name}</span>
+                  {foreign && <span className="repo-owner">{repoOwner}</span>}
                 </button>
                 {active && (
                   <div className="repo-tree">
