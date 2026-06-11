@@ -1,15 +1,11 @@
 import type { Label, Project, Task } from "./types"
-import { getAccessToken } from "./auth-token"
 
 const BASE = "/api"
 
+// Auth rides along automatically via the HttpOnly session cookie.
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getAccessToken()
   const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "content-type": "application/json" },
     ...init,
   })
   if (!res.ok) {
