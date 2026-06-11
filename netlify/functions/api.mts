@@ -126,6 +126,41 @@ const slugify = (s: string) =>
 async function handleGithub(req: Request, path: string): Promise<Response> {
   const sub = path.replace(/^\/github/, "") || "/"
 
+  // GitHub redirects here after an app install / OAuth authorization
+  // (?code=…&installation_id=…&setup_action=install). Exchange the code
+  // server-side, then drop the user back into the app.
+  if (sub === "/callback" && req.method === "GET") {
+    const url = new URL(req.url)
+    const code = url.searchParams.get("code")
+    const installationId = url.searchParams.get("installation_id")
+    let connected = false
+    if (code && process.env.GITHUB_APP_CLIENT_ID && process.env.GITHUB_APP_CLIENT_SECRET) {
+      try {
+        const res = await fetch("https://github.com/login/oauth/access_token", {
+          method: "POST",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify({
+            client_id: process.env.GITHUB_APP_CLIENT_ID,
+            client_secret: process.env.GITHUB_APP_CLIENT_SECRET,
+            code,
+          }),
+        })
+        const body = (await res.json()) as { access_token?: string }
+        connected = !!body.access_token
+      } catch {
+        /* fall through to redirect either way */
+      }
+    }
+    const params = new URLSearchParams({
+      github: connected ? "connected" : "error",
+      ...(installationId ? { installation_id: installationId } : {}),
+    })
+    return new Response(null, {
+      status: 302,
+      headers: { location: `/?${params}` },
+    })
+  }
+
   // GitHub posts push/PR events here (configured on the GitHub App).
   if (sub === "/webhook" && req.method === "POST") {
     const event = req.headers.get("x-github-event") ?? "unknown"
@@ -191,9 +226,12 @@ export default async (req: Request, _context: Context) => {
   const path = url.pathname.replace(/^\/api/, "") || "/"
   const method = req.method
 
-  // Auth endpoints and the GitHub webhook handle their own authentication.
+  // Auth endpoints, the GitHub webhook, and the GitHub install/OAuth
+  // callback handle their own authentication.
   if (path.startsWith("/auth")) return handleAuth(req, path)
-  if (path === "/github/webhook") return handleGithub(req, path)
+  if (path === "/github/webhook" || path === "/github/callback") {
+    return handleGithub(req, path)
+  }
 
   const unauthorized = await authenticate(req)
   if (unauthorized) return unauthorized

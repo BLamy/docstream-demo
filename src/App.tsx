@@ -129,6 +129,22 @@ export default function App() {
     if (!selectedId && pageList?.length) setSelectedId(pageList[0].id)
   }, [pageList, selectedId])
 
+  // Landing back from the GitHub App install/OAuth callback.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const github = url.searchParams.get("github")
+    if (!github) return
+    if (github === "connected") {
+      toast.success("GitHub connected — open Git Sync to push or pull.")
+      setShowGithub(true)
+    } else {
+      toast.error("GitHub connection failed — try installing the app again.")
+    }
+    url.searchParams.delete("github")
+    url.searchParams.delete("installation_id")
+    window.history.replaceState({}, "", url)
+  }, [])
+
   const { data: page } = usePage(selectedId)
   const createPage = useCreatePage()
   const updatePage = useUpdatePage()

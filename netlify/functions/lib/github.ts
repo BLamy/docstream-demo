@@ -1,3 +1,4 @@
+import { createPrivateKey } from "node:crypto"
 import { SignJWT, importPKCS8 } from "jose"
 
 const API = "https://api.github.com"
@@ -11,7 +12,11 @@ function appCreds() {
 
 async function appJwt(): Promise<string> {
   const { appId, pem } = appCreds()
-  const key = await importPKCS8(pem, "RS256")
+  // GitHub issues PKCS#1 keys ("BEGIN RSA PRIVATE KEY"); jose needs PKCS#8.
+  const pkcs8 = createPrivateKey(pem)
+    .export({ type: "pkcs8", format: "pem" })
+    .toString()
+  const key = await importPKCS8(pkcs8, "RS256")
   const now = Math.floor(Date.now() / 1000)
   return new SignJWT({})
     .setProtectedHeader({ alg: "RS256" })
