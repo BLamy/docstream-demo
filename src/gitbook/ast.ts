@@ -13,7 +13,17 @@ export interface TextNode {
   link?: string
 }
 
-export type Inline = TextNode
+/** Inline HTML image, optionally wrapped in a link — GitHub README badge style. */
+export interface InlineImageNode {
+  type: "image"
+  src: string
+  alt?: string
+  width?: string
+  height?: string
+  link?: string
+}
+
+export type Inline = TextNode | InlineImageNode
 
 export interface ParagraphNode {
   type: "paragraph"

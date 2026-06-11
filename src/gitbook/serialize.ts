@@ -127,6 +127,10 @@ function serializeBlock(b: Block): string {
 function inlineToHtml(nodes: Inline[]): string {
   return nodes
     .map((n) => {
+      if (n.type === "image") {
+        const img = `<img src="${n.src}"${n.alt ? ` alt="${n.alt}"` : ""}>`
+        return n.link ? `<a href="${n.link}">${img}</a>` : img
+      }
       let s = n.text
       if (n.code) s = `<code>${s}</code>`
       if (n.bold) s = `<strong>${s}</strong>`

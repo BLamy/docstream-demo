@@ -9,7 +9,7 @@ import type {
   TabNode,
   UpdateNode,
 } from "./ast"
-import { parseInline } from "./inline"
+import { parseInline, plainText, refDefinitions } from "./inline"
 
 // Minimal HTML-inline → markdown-inline bridge for HTML table cells.
 function htmlToInlineMd(html: string): string {
@@ -82,7 +82,15 @@ function collectHtmlUntil(lines: string[], start: number, closeTag: string): { b
 const HINT_STYLES: HintStyle[] = ["info", "success", "warning", "danger"]
 
 export function parseMarkdown(src: string): DocumentNode {
-  return { type: "doc", children: parseBlocks(src.split(/\r?\n/)) }
+  const lines = src.split(/\r?\n/)
+  refDefinitions.clear()
+  const content: string[] = []
+  for (const line of lines) {
+    const def = line.match(/^\[([^\]]+)\]:\s*(\S+)\s*$/)
+    if (def) refDefinitions.set(def[1].toLowerCase(), def[2])
+    else content.push(line)
+  }
+  return { type: "doc", children: parseBlocks(content) }
 }
 
 export function parseBlocks(lines: string[]): Block[] {
@@ -317,24 +325,55 @@ export function parseBlocks(lines: string[]): Block[] {
       continue
     }
 
-    // fenced code
-    const fence = trimmed.match(/^```(\S*)\s*$/)
+    // fenced code (``` or ~~~)
+    const fence = trimmed.match(/^(`{3,}|~{3,})(\S*)\s*$/)
     if (fence) {
       flushParagraph()
+      const marker = fence[1][0]
       const code: string[] = []
       i++
-      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+      while (i < lines.length && !lines[i].trim().startsWith(marker.repeat(3))) {
         code.push(lines[i])
         i++
       }
       i++
       blocks.push({
         type: "code",
-        language: fence[1] || null,
+        language: fence[2] || null,
         title: null,
         lineNumbers: false,
         code: code.join("\n"),
       })
+      continue
+    }
+
+    // indented code block (4+ spaces, GFM)
+    if (paragraph.length === 0 && /^ {4,}\S/.test(line) && !line.trim().match(/^([-*+]|\d+[.)])\s/)) {
+      const code: string[] = []
+      while (
+        i < lines.length &&
+        (/^ {4,}\S/.test(lines[i]) || (!lines[i].trim() && /^ {4,}\S/.test(lines[i + 1] ?? "")))
+      ) {
+        code.push(lines[i].slice(4))
+        i++
+      }
+      blocks.push({ type: "code", language: null, title: null, lineNumbers: false, code: code.join("\n") })
+      continue
+    }
+
+    // setext headings: a paragraph line followed by ==== (h1) or ---- (h2)
+    if (paragraph.length && /^=+$/.test(trimmed)) {
+      const text = paragraph.join(" ").trim()
+      paragraph.length = 0
+      blocks.push({ type: "heading", level: 1, children: parseInline(text) })
+      i++
+      continue
+    }
+    if (paragraph.length && /^-+$/.test(trimmed)) {
+      const text = paragraph.join(" ").trim()
+      paragraph.length = 0
+      blocks.push({ type: "heading", level: 2, children: parseInline(text) })
+      i++
       continue
     }
 
@@ -391,36 +430,13 @@ export function parseBlocks(lines: string[]): Block[] {
       continue
     }
 
-    // list (unordered / ordered / task)
-    const listMatch = trimmed.match(/^([-*+]|\d+[.)])\s+(.*)$/)
-    if (listMatch) {
+    // list (unordered / ordered / task, with GFM nesting)
+    const listMatch = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/)
+    if (listMatch && listMatch[1].length < 4) {
       flushParagraph()
-      const ordered = /^\d/.test(listMatch[1])
-      const items: ListItemNode[] = []
-      let task = false
-      while (i < lines.length) {
-        const m = lines[i].trim().match(/^([-*+]|\d+[.)])\s+(.*)$/)
-        if (!m || /^\d/.test(m[1]) !== ordered) break
-        let content = m[2]
-        let checked: boolean | undefined
-        const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/)
-        if (taskMatch) {
-          task = true
-          checked = taskMatch[1] !== " "
-          content = taskMatch[2]
-        }
-        // gather indented continuation lines into the same item
-        const sub: string[] = []
-        i++
-        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !lines[i].trim().match(/^([-*+]|\d+[.)])\s/)) {
-          sub.push(lines[i].trim())
-          i++
-        }
-        const para: Block = { type: "paragraph", children: parseInline(content) }
-        const children: Block[] = sub.length ? [para, ...parseBlocks(sub)] : [para]
-        items.push(checked === undefined ? { type: "listItem", children } : { type: "listItem", children, checked })
-      }
-      blocks.push({ type: "list", ordered, task, items })
+      const { list, next } = parseList(lines, i)
+      blocks.push(list)
+      i = next
       continue
     }
 
@@ -459,7 +475,7 @@ function parseSteps(lines: string[]): StepNode[] {
       const inner = parseBlocks(body)
       let title = ""
       if (inner[0]?.type === "heading") {
-        title = inner[0].children.map((c) => c.text).join("")
+        title = plainText(inner[0].children)
         inner.shift()
       }
       steps.push({ type: "step", title, children: inner })
@@ -469,6 +485,76 @@ function parseSteps(lines: string[]): StepNode[] {
     }
   }
   return steps
+}
+
+interface ParsedList {
+  list: Extract<Block, { type: "list" }>
+  next: number
+}
+
+// Indent-aware list parser: deeper-indented marker lines become nested lists
+// inside the item (handled recursively via parseBlocks on dedented lines).
+function parseList(lines: string[], start: number): ParsedList {
+  const first = lines[start].match(/^(\s*)([-*+]|\d+[.)])\s+/)!
+  const baseIndent = first[1].length
+  const ordered = /^\d/.test(first[2])
+  const items: ListItemNode[] = []
+  let task = false
+  let i = start
+
+  while (i < lines.length) {
+    const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/)
+    if (!m || m[1].length !== baseIndent || /^\d/.test(m[2]) !== ordered) break
+
+    let content = m[3]
+    let checked: boolean | undefined
+    const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/)
+    if (taskMatch) {
+      task = true
+      checked = taskMatch[1] !== " "
+      content = taskMatch[2]
+    }
+
+    // Everything indented deeper than the marker belongs to this item.
+    const contIndent = baseIndent + m[2].length + 1
+    const body: string[] = []
+    i++
+    while (i < lines.length) {
+      const raw = lines[i]
+      if (!raw.trim()) {
+        // blank line stays in the item only if more indented content follows
+        const lookahead = lines[i + 1]
+        if (lookahead !== undefined && /^\s+/.test(lookahead) && lookahead.search(/\S/) >= Math.min(contIndent, baseIndent + 2)) {
+          body.push("")
+          i++
+          continue
+        }
+        break
+      }
+      const indent = raw.search(/\S/)
+      if (indent >= Math.min(contIndent, baseIndent + 2)) {
+        body.push(raw.slice(Math.min(indent, contIndent)))
+        i++
+        continue
+      }
+      break
+    }
+
+    const para: Block = { type: "paragraph", children: parseInline(content) }
+    const children: Block[] = body.length ? [para, ...parseBlocks(body)] : [para]
+    items.push(
+      checked === undefined ? { type: "listItem", children } : { type: "listItem", children, checked }
+    )
+
+    // skip a single blank line between sibling items
+    if (i < lines.length && !lines[i].trim()) {
+      const after = lines[i + 1]?.match(/^(\s*)([-*+]|\d+[.)])\s+/)
+      if (after && after[1].length === baseIndent) i++
+      else break
+    }
+  }
+
+  return { list: { type: "list", ordered, task, items }, next: i }
 }
 
 function parseUpdates(lines: string[]): UpdateNode[] {

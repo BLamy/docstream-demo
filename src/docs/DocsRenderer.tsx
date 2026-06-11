@@ -9,14 +9,33 @@ import {
 } from "lucide-react"
 
 import type { Block, DocumentNode, Inline } from "@/gitbook/ast"
+import { resolveAsset } from "@/lib/assets"
 import { parseMarkdown } from "@/gitbook/parse"
 import { OpenApiOperation } from "@/openapi/OpenApiOperation"
 import { Mermaid } from "./Mermaid"
+import { HighlightedCode } from "./HighlightedCode"
 
 function InlineText({ nodes }: { nodes: Inline[] }) {
   return (
     <>
       {nodes.map((n, i) => {
+        if (n.type === "image") {
+          const img = (
+            <img
+              src={resolveAsset(n.src)}
+              alt={n.alt ?? ""}
+              className="docs-inline-img"
+              style={{ width: n.width, height: n.height }}
+            />
+          )
+          return n.link ? (
+            <a key={i} href={n.link} target="_blank" rel="noreferrer" className="docs-inline-img-link">
+              {img}
+            </a>
+          ) : (
+            <span key={i}>{img}</span>
+          )
+        }
         let el: ReactNode = n.text
         if (n.code) el = <code>{el}</code>
         if (n.bold) el = <strong>{el}</strong>
@@ -103,7 +122,7 @@ function BlockView({ block }: { block: Block }) {
                 </div>
               ))
             ) : (
-              <code>{block.code}</code>
+              <HighlightedCode code={block.code} language={block.language} />
             )}
           </pre>
         </div>
@@ -180,7 +199,7 @@ function BlockView({ block }: { block: Block }) {
     case "figure":
       return (
         <figure className="docs-figure">
-          {block.src && <img src={block.src} alt={block.alt} />}
+          {block.src && <img src={resolveAsset(block.src)} alt={block.alt} />}
           {block.caption && <figcaption>{block.caption}</figcaption>}
         </figure>
       )

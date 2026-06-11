@@ -2,7 +2,15 @@ import type { Config, Context } from "@netlify/functions"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
 import { pages, makeId, type Page } from "./lib/pages.ts"
-import { listInstallations, pushFiles, pullFiles } from "./lib/github.ts"
+import {
+  commitFile,
+  getFile,
+  listInstallations,
+  listMarkdownTree,
+  openPullRequest,
+  pushFiles,
+  pullFiles,
+} from "./lib/github.ts"
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -166,6 +174,43 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
     const event = req.headers.get("x-github-event") ?? "unknown"
     console.log(`github webhook: ${event}`)
     return json({ ok: true })
+  }
+
+  // /github/repos/:owner/:repo/(tree|file|save)
+  const repoMatch = sub.match(/^\/repos\/([^/]+)\/([^/]+)\/(tree|file|save)$/)
+  if (repoMatch) {
+    const fullName = `${repoMatch[1]}/${repoMatch[2]}`
+    const action = repoMatch[3]
+    try {
+      if (action === "tree" && req.method === "GET") {
+        return json(await listMarkdownTree(fullName))
+      }
+      if (action === "file" && req.method === "GET") {
+        const url = new URL(req.url)
+        const filePath = url.searchParams.get("path")
+        if (!filePath) return json({ error: "path required" }, 400)
+        return json(await getFile(fullName, filePath))
+      }
+      if (action === "save" && req.method === "POST") {
+        const body = (await req.json()) as {
+          path?: string
+          content?: string
+          message?: string
+          mode?: "main" | "pr"
+          sha?: string
+        }
+        if (!body.path || typeof body.content !== "string") {
+          return json({ error: "path and content required" }, 400)
+        }
+        const message = body.message || `docs: update ${body.path}`
+        if (body.mode === "pr") {
+          return json(await openPullRequest(fullName, body.path, body.content, message, body.sha))
+        }
+        return json(await commitFile(fullName, body.path, body.content, message, body.sha))
+      }
+    } catch (e) {
+      return json({ error: String(e) }, 502)
+    }
   }
 
   if (sub === "/installations" && req.method === "GET") {

@@ -14,8 +14,20 @@ export interface PMNode {
 
 function inlineToPM(nodes: Inline[]): PMNode[] {
   return nodes
-    .filter((n) => n.text.length > 0)
+    .filter((n) => n.type === "image" || n.text.length > 0)
     .map((n) => {
+      if (n.type === "image") {
+        return {
+          type: "gbInlineImage",
+          attrs: {
+            src: n.src,
+            alt: n.alt ?? "",
+            width: n.width ?? "",
+            height: n.height ?? "",
+            link: n.link ?? "",
+          },
+        }
+      }
       const marks: PMNode["marks"] = []
       if (n.bold) marks.push({ type: "bold" })
       if (n.italic) marks.push({ type: "italic" })
@@ -155,8 +167,19 @@ export function astToTiptap(doc: DocumentNode): PMNode {
 function pmTextToInline(nodes: PMNode[] | undefined): Inline[] {
   if (!nodes) return []
   return nodes
-    .filter((n) => n.type === "text" && n.text)
-    .map((n) => {
+    .filter((n) => (n.type === "text" && n.text) || n.type === "gbInlineImage")
+    .map((n): Inline => {
+      if (n.type === "gbInlineImage") {
+        const a = n.attrs ?? {}
+        return {
+          type: "image",
+          src: String(a.src ?? ""),
+          ...(a.alt ? { alt: String(a.alt) } : {}),
+          ...(a.width ? { width: String(a.width) } : {}),
+          ...(a.height ? { height: String(a.height) } : {}),
+          ...(a.link ? { link: String(a.link) } : {}),
+        }
+      }
       const inline: Inline = { type: "text", text: n.text! }
       for (const mark of n.marks ?? []) {
         if (mark.type === "bold") inline.bold = true

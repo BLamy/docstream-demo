@@ -7,36 +7,17 @@ import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table
 import {
   Bold,
   Code as CodeIcon,
-  Columns2,
-  FileCode2,
-  Heading1,
-  Heading2,
-  Heading3,
-  Image,
   Italic,
-  Lightbulb,
   Link2,
-  List,
-  ListChecks,
-  ListOrdered,
-  ListTodo,
-  Minus,
-  PanelTop,
-  Quote,
-  Sigma,
-  SquareChevronDown,
+  SlashSquare,
   Strikethrough,
-  Table as TableIcon,
-  Megaphone,
-  MonitorPlay,
-  Webhook,
-  Workflow,
 } from "lucide-react"
 
 import { parseMarkdown } from "@/gitbook/parse"
 import { serializeMarkdown } from "@/gitbook/serialize"
 import { astToTiptap, tiptapToAst, type PMNode } from "./convert"
 import { GbCodeBlock, gitbookNodes } from "./nodes"
+import { SlashMenu } from "./slash-menu"
 
 interface Props {
   markdown: string
@@ -49,9 +30,6 @@ const GbTable = Table.extend({
     return { ...this.parent?.(), view: { default: null } }
   },
 })
-
-const para = (text = ""): PMNode =>
-  text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" }
 
 function ToolbarButton({
   onClick,
@@ -81,8 +59,6 @@ function ToolbarButton({
 
 function Toolbar({ editor }: { editor: TiptapEditor }) {
   const chain = () => editor.chain().focus()
-  const insert = (content: PMNode) => chain().insertContent(content).run()
-
   return (
     <div className="gb-toolbar">
       <ToolbarButton title="Bold" active={editor.isActive("bold")} onClick={() => chain().toggleBold().run()}>
@@ -108,163 +84,16 @@ function Toolbar({ editor }: { editor: TiptapEditor }) {
       >
         <Link2 className="size-4" />
       </ToolbarButton>
-
-      <span className="gb-toolbar-sep" />
-
-      {[1, 2, 3].map((level) => (
-        <ToolbarButton
-          key={level}
-          title={`Heading ${level}`}
-          active={editor.isActive("heading", { level })}
-          onClick={() => chain().toggleHeading({ level: level as 1 | 2 | 3 }).run()}
-        >
-          {level === 1 ? <Heading1 className="size-4" /> : level === 2 ? <Heading2 className="size-4" /> : <Heading3 className="size-4" />}
-        </ToolbarButton>
-      ))}
-      <ToolbarButton title="Bullet list" active={editor.isActive("bulletList")} onClick={() => chain().toggleBulletList().run()}>
-        <List className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Ordered list" active={editor.isActive("orderedList")} onClick={() => chain().toggleOrderedList().run()}>
-        <ListOrdered className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Task list" active={editor.isActive("taskList")} onClick={() => chain().toggleList("taskList", "taskItem").run()}>
-        <ListTodo className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Quote" active={editor.isActive("blockquote")} onClick={() => chain().toggleBlockquote().run()}>
-        <Quote className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Divider" onClick={() => chain().setHorizontalRule().run()}>
-        <Minus className="size-4" />
-      </ToolbarButton>
-
-      <span className="gb-toolbar-sep" />
-
-      <ToolbarButton title="Hint" onClick={() => insert({ type: "gbHint", attrs: { style: "info" }, content: [para("Write a hint…")] })}>
-        <Lightbulb className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="Tabs"
-        onClick={() =>
-          insert({
-            type: "gbTabs",
-            content: [
-              { type: "gbTab", attrs: { title: "First tab" }, content: [para()] },
-              { type: "gbTab", attrs: { title: "Second tab" }, content: [para()] },
-            ],
-          })
-        }
-      >
-        <PanelTop className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="Expandable"
-        onClick={() => insert({ type: "gbExpandable", attrs: { summary: "Click to expand" }, content: [para()] })}
-      >
-        <SquareChevronDown className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="Stepper"
-        onClick={() =>
-          insert({
-            type: "gbStepper",
-            content: [
-              { type: "gbStep", attrs: { title: "First step" }, content: [para()] },
-              { type: "gbStep", attrs: { title: "Second step" }, content: [para()] },
-            ],
-          })
-        }
-      >
-        <ListChecks className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Code block" onClick={() => chain().toggleCodeBlock().run()}>
-        <FileCode2 className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Embed" onClick={() => insert({ type: "gbEmbed", attrs: { url: "" } })}>
-        <MonitorPlay className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Page link (content-ref)" onClick={() => insert({ type: "gbContentRef", attrs: { url: "", label: "Page link" } })}>
-        <Link2 className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="Columns"
-        onClick={() =>
-          insert({
-            type: "gbColumns",
-            content: [
-              { type: "gbColumn", content: [para()] },
-              { type: "gbColumn", content: [para()] },
-            ],
-          })
-        }
-      >
-        <Columns2 className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Image" onClick={() => insert({ type: "gbFigure", attrs: { src: "", alt: "", caption: "" } })}>
-        <Image className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Math" onClick={() => insert({ type: "gbMath", attrs: { formula: "e = mc^2" } })}>
-        <Sigma className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton title="Table" onClick={() => chain().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run()}>
-        <TableIcon className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="Updates (changelog)"
-        onClick={() =>
-          insert({
-            type: "gbUpdates",
-            attrs: { format: "full" },
-            content: [
-              {
-                type: "gbUpdate",
-                attrs: { date: new Date().toISOString().slice(0, 10) },
-                content: [
-                  { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "What changed" }] },
-                  para(),
-                ],
-              },
-            ],
-          })
-        }
-      >
-        <Megaphone className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="OpenAPI operation"
-        onClick={() =>
-          insert({
-            type: "gbOpenapi",
-            attrs: {
-              spec: "",
-              path: "/",
-              method: "get",
-              specUrl: "",
-              label: "",
-            },
-          })
-        }
-      >
-        <Webhook className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton
-        title="Mermaid diagram"
-        onClick={() =>
-          insert({
-            type: "codeBlock",
-            attrs: { language: "mermaid", title: null, lineNumbers: false },
-            content: [{ type: "text", text: "graph TD\n  A --> B" }],
-          })
-        }
-      >
-        <Workflow className="size-4" />
-      </ToolbarButton>
+      <span className="gb-toolbar-hint">
+        <SlashSquare className="size-3.5" /> Type <kbd>/</kbd> for blocks
+      </span>
     </div>
   )
 }
 
 export function GitbookEditor({ markdown, onChange }: Props) {
   // Tracks the markdown the editor itself produced, so external updates
-  // (page switches) reset content but our own onChange echoes don't.
+  // (file switches) reset content but our own onChange echoes don't.
   const lastEmitted = useRef<string | null>(null)
 
   const editor = useEditor({
@@ -277,7 +106,8 @@ export function GitbookEditor({ markdown, onChange }: Props) {
       TableRow,
       TableHeader,
       TableCell,
-      Placeholder.configure({ placeholder: "Write, or insert a block from the toolbar…" }),
+      Placeholder.configure({ placeholder: "Write, or type / to insert a block…" }),
+      SlashMenu,
       ...gitbookNodes,
     ],
     content: astToTiptap(parseMarkdown(markdown)),
@@ -291,7 +121,8 @@ export function GitbookEditor({ markdown, onChange }: Props) {
   useEffect(() => {
     if (!editor) return
     if (markdown === lastEmitted.current) return
-    editor.commands.setContent(astToTiptap(parseMarkdown(markdown)))
+    lastEmitted.current = markdown
+    editor.commands.setContent(astToTiptap(parseMarkdown(markdown)), { emitUpdate: false })
   }, [editor, markdown])
 
   if (!editor) return null

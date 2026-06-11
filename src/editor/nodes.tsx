@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core"
-import CodeBlock from "@tiptap/extension-code-block"
+import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight"
+import { common, createLowlight } from "lowlight"
 import {
   NodeViewContent,
   NodeViewWrapper,
@@ -19,6 +20,7 @@ import {
 
 import type { HintStyle } from "@/gitbook/ast"
 import { OpenApiOperation } from "@/openapi/OpenApiOperation"
+import { resolveAsset } from "@/lib/assets"
 
 // ---------- Hint ----------
 
@@ -424,7 +426,7 @@ function FigureView({ node, updateAttributes, editor }: NodeViewProps) {
   return (
     <NodeViewWrapper className="gb-figure" contentEditable={false}>
       {src ? (
-        <img src={src} alt={alt} className="gb-figure-img" />
+        <img src={resolveAsset(src)} alt={alt} className="gb-figure-img" />
       ) : (
         <div className="gb-figure-placeholder">No image</div>
       )}
@@ -549,7 +551,7 @@ function CodeView({ node, updateAttributes, editor }: NodeViewProps) {
   )
 }
 
-export const GbCodeBlock = CodeBlock.extend({
+export const GbCodeBlock = CodeBlockLowlight.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -559,6 +561,50 @@ export const GbCodeBlock = CodeBlock.extend({
   },
   addNodeView() {
     return ReactNodeViewRenderer(CodeView)
+  },
+}).configure({ lowlight: createLowlight(common) })
+
+// ---------- Inline image (GitHub badge style) ----------
+
+function InlineImageView({ node }: NodeViewProps) {
+  const { src, alt, width, height, link } = node.attrs
+  const img = (
+    <img
+      src={resolveAsset(src)}
+      alt={alt}
+      className="gb-inline-img"
+      style={{ width: width || undefined, height: height || undefined }}
+    />
+  )
+  return (
+    <NodeViewWrapper as="span" className="gb-inline-img-wrap" contentEditable={false}>
+      {link ? <a href={link}>{img}</a> : img}
+    </NodeViewWrapper>
+  )
+}
+
+export const GbInlineImage = Node.create({
+  name: "gbInlineImage",
+  group: "inline",
+  inline: true,
+  atom: true,
+  addAttributes() {
+    return {
+      src: { default: "" },
+      alt: { default: "" },
+      width: { default: "" },
+      height: { default: "" },
+      link: { default: "" },
+    }
+  },
+  parseHTML() {
+    return [{ tag: "img[data-gb-inline-img]" }]
+  },
+  renderHTML({ HTMLAttributes, node }) {
+    return ["img", mergeAttributes(HTMLAttributes, { "data-gb-inline-img": "", src: node.attrs.src })]
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(InlineImageView)
   },
 })
 
@@ -698,4 +744,5 @@ export const gitbookNodes = [
   GbUpdates,
   GbUpdate,
   GbOpenapi,
+  GbInlineImage,
 ]

@@ -17,6 +17,8 @@ function login() {
     redirect_uri: window.location.origin,
     scope: "openid profile email",
     state,
+    // Always show the login screen instead of silently reusing the SSO session.
+    prompt: "login",
     ...(audience ? { audience } : {}),
   })
   window.location.assign(`https://${domain}/authorize?${params}`)

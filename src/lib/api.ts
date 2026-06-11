@@ -1,18 +1,23 @@
-export interface PageMeta {
-  id: string
-  title: string
-  path: string
-  order: number
-}
-
-export interface Page extends PageMeta {
-  markdown: string
-}
-
 export interface Installation {
   id: number
   account: string
   repositories: string[]
+}
+
+export interface RepoTree {
+  branch: string
+  files: string[]
+}
+
+export interface RepoFile {
+  content: string
+  sha: string
+}
+
+export interface SaveResult {
+  commitUrl?: string
+  prUrl?: string
+  number?: number
 }
 
 const BASE = "/api"
@@ -37,24 +42,17 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getPages: () => http<PageMeta[]>("/pages"),
-  getPage: (id: string) => http<Page>(`/pages/${id}`),
-  createPage: (input: { title: string }) =>
-    http<Page>("/pages", { method: "POST", body: JSON.stringify(input) }),
-  updatePage: (id: string, patch: Partial<Page>) =>
-    http<Page>(`/pages/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  deletePage: (id: string) => http<Page>(`/pages/${id}`, { method: "DELETE" }),
-
   githubInstallations: () => http<Installation[]>("/github/installations"),
-  githubSync: (repo: string) =>
-    http<{ committed: string[] }>("/github/sync", {
+  repoTree: (repo: string) => http<RepoTree>(`/github/repos/${repo}/tree`),
+  repoFile: (repo: string, path: string) =>
+    http<RepoFile>(`/github/repos/${repo}/file?path=${encodeURIComponent(path)}`),
+  repoSave: (
+    repo: string,
+    body: { path: string; content: string; message?: string; mode: "main" | "pr"; sha?: string }
+  ) =>
+    http<SaveResult>(`/github/repos/${repo}/save`, {
       method: "POST",
-      body: JSON.stringify({ repo }),
-    }),
-  githubPull: (repo: string) =>
-    http<{ imported: number }>("/github/pull", {
-      method: "POST",
-      body: JSON.stringify({ repo }),
+      body: JSON.stringify(body),
     }),
 
   logout: () => http<{ ok: true }>("/auth/logout", { method: "POST" }),

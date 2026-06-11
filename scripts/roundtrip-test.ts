@@ -146,3 +146,72 @@ if (fmd1 !== serializeMarkdown(f2)) {
 }
 console.log("✓ gitbook export fixture round-trip stable")
 console.log("fixture block types:", f1.children.map((b) => b.type).join(", "))
+
+// --- GitHub README badge row ---
+const badges = `Hi, I'm Brett. i like computers\n\n<a href="https://linkedin.com/in/blamy"><img src="linkedin.svg" width="50px" height="50px" /></a> <a href="https://github.com/blamy"><img src="github.svg" width="50px" height="50px" /></a> <a href="https://twitter.com/brett_lamy"><img src="twitter.svg" width="50px" height="50px" /></a> <a href="https://bsky.app/profile/blamy.dev"><img src="bluesky.svg" width="50px" height="50px" /></a>\n`
+const b1 = parseMarkdown(badges)
+const bmd = serializeMarkdown(b1)
+const b2 = parseMarkdown(bmd)
+if (JSON.stringify(b1) !== JSON.stringify(b2)) {
+  console.error("✗ badge AST unstable"); process.exit(1)
+}
+const imgs = b1.children[1]
+if (imgs.type !== "paragraph" || imgs.children.filter((c) => c.type === "image").length !== 4) {
+  console.error("✗ expected 4 inline images, got:", JSON.stringify(imgs).slice(0, 200)); process.exit(1)
+}
+if (!bmd.includes('<a href="https://linkedin.com/in/blamy"><img src="linkedin.svg" width="50px" height="50px" /></a>')) {
+  console.error("✗ badge serialization changed:", bmd); process.exit(1)
+}
+console.log("✓ github badge row round-trip stable (4 inline images)")
+
+// --- GFM features ---
+const gfm = [
+  "Setext H1",
+  "=========",
+  "",
+  "Setext H2",
+  "---------",
+  "",
+  "- top",
+  "  - nested",
+  "    - deeper",
+  "- top2",
+  "",
+  "1. one",
+  "   1. one.one",
+  "2. two",
+  "",
+  "~~~js",
+  "const tilde = true",
+  "~~~",
+  "",
+  "    indented code",
+  "    line two",
+  "",
+  "Visit https://example.com/a_b and <https://x.com/path>.",
+  "",
+  "See [the docs][docs] and [GitHub][].",
+  "",
+  "[docs]: https://docs.example.com",
+  "[github]: https://github.com",
+].join("\n")
+const g1 = parseMarkdown(gfm)
+const gmd = serializeMarkdown(g1)
+const g2 = parseMarkdown(gmd)
+if (JSON.stringify(g1) !== JSON.stringify(g2)) {
+  console.error("✗ GFM AST unstable")
+  const a = JSON.stringify(g1, null, 1).split("\n"), b = JSON.stringify(g2, null, 1).split("\n")
+  for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) { console.error(`diff@${i}\n 1: ${a[i]}\n 2: ${b[i]}`); break }
+  process.exit(1)
+}
+const types = g1.children.map((b) => b.type).join(",")
+const nested = g1.children[2]
+const ok =
+  g1.children[0].type === "heading" && g1.children[0].level === 1 &&
+  g1.children[1].type === "heading" && g1.children[1].level === 2 &&
+  nested.type === "list" && nested.items[0].children.some((c) => c.type === "list") &&
+  g1.children[4].type === "code" && g1.children[5].type === "code"
+if (!ok) { console.error("✗ GFM structure wrong:", types); process.exit(1) }
+const links = g1.children.filter((b) => b.type === "paragraph").flatMap((p) => p.children).filter((c) => c.type === "text" && c.link)
+if (links.length < 4) { console.error("✗ expected 4 links, got", links.length); process.exit(1) }
+console.log("✓ GFM round-trip stable (setext, nested lists, ~~~, indented code, autolinks, ref links)")
