@@ -48,12 +48,22 @@ export interface Installation {
   repositories: string[]
 }
 
-export async function listInstallations(): Promise<Installation[]> {
+/** Installation ids of THIS app that a GitHub user (by OAuth token) can access. */
+export async function userInstallationIds(userToken: string): Promise<number[]> {
+  const res = (await gh("/user/installations", userToken)) as {
+    installations: Array<{ id: number; app_id: number }>
+  }
+  const appId = Number(process.env.GITHUB_APP_ID)
+  return res.installations.filter((i) => i.app_id === appId).map((i) => i.id)
+}
+
+export async function listInstallations(onlyIds?: number[]): Promise<Installation[]> {
   const jwt = await appJwt()
-  const installs = (await gh("/app/installations", jwt)) as Array<{
+  let installs = (await gh("/app/installations", jwt)) as Array<{
     id: number
     account: { login: string }
   }>
+  if (onlyIds) installs = installs.filter((i) => onlyIds.includes(i.id))
   const out: Installation[] = []
   for (const inst of installs) {
     const token = await installationToken(inst.id)
@@ -85,7 +95,7 @@ export async function installationToken(installationId: number): Promise<string>
   return res.token
 }
 
-async function installationForRepo(fullName: string): Promise<number> {
+export async function installationForRepo(fullName: string): Promise<number> {
   const jwt = await appJwt()
   const [owner, repo] = fullName.split("/")
   const res = (await gh(`/repos/${owner}/${repo}/installation`, jwt)) as { id: number }

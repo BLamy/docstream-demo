@@ -1,16 +1,16 @@
 import type { Config, Context } from "@netlify/functions"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
-import { pages, makeId, type Page } from "./lib/pages.ts"
 import {
   commitFile,
   getFile,
+  installationForRepo,
   listInstallations,
   listMarkdownTree,
   openPullRequest,
-  pushFiles,
-  pullFiles,
+  userInstallationIds,
 } from "./lib/github.ts"
+import { getLinkedInstallations, linkInstallations } from "./lib/user-links.ts"
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -113,6 +113,18 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
   return json({ error: "not found", path }, 404)
 }
 
+/** Auth0 user id (sub) of the current session, or null. */
+async function sessionSub(req: Request): Promise<string | null> {
+  const token = bearerOrCookieToken(req)
+  if (!token) return null
+  try {
+    const { payload } = await verifyToken(token)
+    return String(payload.sub)
+  } catch {
+    return null
+  }
+}
+
 async function authenticate(req: Request): Promise<Response | null> {
   if (AUTH_DISABLED) return null
   const token = bearerOrCookieToken(req)
@@ -125,12 +137,6 @@ async function authenticate(req: Request): Promise<Response | null> {
   }
 }
 
-const slugify = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "page"
-
 async function handleGithub(req: Request, path: string): Promise<Response> {
   const sub = path.replace(/^\/github/, "") || "/"
 
@@ -140,9 +146,14 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
   if (sub === "/callback" && req.method === "GET") {
     const url = new URL(req.url)
     const code = url.searchParams.get("code")
-    const installationId = url.searchParams.get("installation_id")
-    let connected = false
-    if (code && process.env.GITHUB_APP_CLIENT_ID && process.env.GITHUB_APP_CLIENT_SECRET) {
+    // The GitHub connection is bound to the logged-in Auth0 user: the OAuth
+    // code identifies the GitHub user, whose installations get linked to the
+    // Auth0 sub. Without a session there is nothing to link to.
+    const userSub = await sessionSub(req)
+    let outcome = "error"
+    if (!userSub) {
+      outcome = "login-required"
+    } else if (code && process.env.GITHUB_APP_CLIENT_ID && process.env.GITHUB_APP_CLIENT_SECRET) {
       try {
         const res = await fetch("https://github.com/login/oauth/access_token", {
           method: "POST",
@@ -154,18 +165,18 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
           }),
         })
         const body = (await res.json()) as { access_token?: string }
-        connected = !!body.access_token
-      } catch {
-        /* fall through to redirect either way */
+        if (body.access_token) {
+          const ids = await userInstallationIds(body.access_token)
+          await linkInstallations(userSub, ids)
+          outcome = "connected"
+        }
+      } catch (e) {
+        console.error("github callback link failed:", e)
       }
     }
-    const params = new URLSearchParams({
-      github: connected ? "connected" : "error",
-      ...(installationId ? { installation_id: installationId } : {}),
-    })
     return new Response(null, {
       status: 302,
-      headers: { location: `/?${params}` },
+      headers: { location: `/?github=${outcome}` },
     })
   }
 
@@ -182,6 +193,12 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
     const fullName = `${repoMatch[1]}/${repoMatch[2]}`
     const action = repoMatch[3]
     try {
+      // The repo must belong to an installation this user connected.
+      const userSub = await sessionSub(req)
+      const linked = userSub ? await getLinkedInstallations(userSub) : []
+      if (!linked.includes(await installationForRepo(fullName))) {
+        return json({ error: "repository not connected to this account" }, 403)
+      }
       if (action === "tree" && req.method === "GET") {
         return json(await listMarkdownTree(fullName))
       }
@@ -215,49 +232,10 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
 
   if (sub === "/installations" && req.method === "GET") {
     try {
-      return json(await listInstallations())
-    } catch (e) {
-      return json({ error: String(e) }, 502)
-    }
-  }
-
-  if (sub === "/sync" && req.method === "POST") {
-    const { repo } = (await req.json()) as { repo?: string }
-    if (!repo) return json({ error: "repo required (owner/name)" }, 400)
-    try {
-      const files = pages.map((p) => ({ path: p.path, content: p.markdown }))
-      const result = await pushFiles(repo, files, "docs: sync from blamy-notes")
-      return json(result)
-    } catch (e) {
-      return json({ error: String(e) }, 502)
-    }
-  }
-
-  if (sub === "/pull" && req.method === "POST") {
-    const { repo } = (await req.json()) as { repo?: string }
-    if (!repo) return json({ error: "repo required (owner/name)" }, 400)
-    try {
-      const files = await pullFiles(repo)
-      let imported = 0
-      for (const file of files) {
-        const title =
-          file.content.match(/^#\s+(.+)$/m)?.[1] ?? file.path.replace(/\.md$/, "")
-        const existing = pages.find((p) => p.path === file.path)
-        if (existing) {
-          existing.markdown = file.content
-          existing.title = title
-        } else {
-          pages.push({
-            id: makeId(),
-            title,
-            path: file.path,
-            order: pages.length + 1,
-            markdown: file.content,
-          })
-        }
-        imported++
-      }
-      return json({ imported })
+      const userSub = await sessionSub(req)
+      const linked = userSub ? await getLinkedInstallations(userSub) : []
+      if (!linked.length) return json([])
+      return json(await listInstallations(linked))
     } catch (e) {
       return json({ error: String(e) }, 502)
     }
@@ -269,7 +247,6 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
 export default async (req: Request, _context: Context) => {
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api/, "") || "/"
-  const method = req.method
 
   // Auth endpoints, the GitHub webhook, and the GitHub install/OAuth
   // callback handle their own authentication.
@@ -282,52 +259,6 @@ export default async (req: Request, _context: Context) => {
   if (unauthorized) return unauthorized
 
   if (path.startsWith("/github")) return handleGithub(req, path)
-
-  // GET /api/pages — sidebar tree (no markdown bodies)
-  if (path === "/pages" && method === "GET") {
-    return json(
-      [...pages]
-        .sort((a, b) => a.order - b.order)
-        .map(({ id, title, path: p, order }) => ({ id, title, path: p, order }))
-    )
-  }
-
-  if (path === "/pages" && method === "POST") {
-    const body = (await req.json()) as Partial<Page>
-    const title = (body.title || "Untitled").trim()
-    const page: Page = {
-      id: makeId(),
-      title,
-      path: body.path || `${slugify(title)}.md`,
-      order: pages.length + 1,
-      markdown: body.markdown ?? `# ${title}\n`,
-    }
-    pages.push(page)
-    return json(page, 201)
-  }
-
-  const pageMatch = path.match(/^\/pages\/([^/]+)$/)
-  if (pageMatch) {
-    const page = pages.find((p) => p.id === pageMatch[1])
-    if (!page) return json({ error: "not found" }, 404)
-
-    if (method === "GET") return json(page)
-
-    if (method === "PATCH") {
-      const body = (await req.json()) as Partial<Page>
-      if (typeof body.title === "string") page.title = body.title
-      if (typeof body.markdown === "string") page.markdown = body.markdown
-      if (typeof body.path === "string") page.path = body.path
-      if (typeof body.order === "number") page.order = body.order
-      return json(page)
-    }
-
-    if (method === "DELETE") {
-      const idx = pages.findIndex((p) => p.id === page.id)
-      pages.splice(idx, 1)
-      return json(page)
-    }
-  }
 
   return json({ error: "not found", path }, 404)
 }
