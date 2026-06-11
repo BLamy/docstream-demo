@@ -4,13 +4,11 @@ import { createRemoteJWKSet, jwtVerify } from "jose"
 import {
   commitFile,
   getFile,
-  installationForRepo,
-  listInstallations,
   listMarkdownTree,
+  listUserRepos,
   openPullRequest,
-  userInstallationIds,
 } from "./lib/github.ts"
-import { getLinkedInstallations, linkInstallations } from "./lib/user-links.ts"
+import { GithubNotConnectedError, githubTokenForUser } from "./lib/auth0-vault.ts"
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -23,6 +21,7 @@ const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE
 const AUTH0_CLIENT_ID = process.env.AUTH0_CLIENT_ID
 const AUTH0_CLIENT_SECRET = process.env.AUTH0_CLIENT_SECRET
 const COOKIE = "auth_token"
+const REFRESH_COOKIE = "auth_refresh"
 // AUTH_DISABLED lets the API run open until the Auth0 .env is provisioned.
 const AUTH_DISABLED = process.env.AUTH_DISABLED === "true"
 
@@ -30,12 +29,16 @@ const jwks = createRemoteJWKSet(
   new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
 )
 
+function cookieValue(req: Request, name: string): string | null {
+  const cookies = req.headers.get("cookie") || ""
+  const match = cookies.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
+  return match ? match[1] : null
+}
+
 function bearerOrCookieToken(req: Request): string | null {
   const header = req.headers.get("authorization") || ""
   if (header.startsWith("Bearer ")) return header.slice(7)
-  const cookies = req.headers.get("cookie") || ""
-  const match = cookies.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`))
-  return match ? match[1] : null
+  return cookieValue(req, COOKIE)
 }
 
 async function verifyToken(token: string) {
@@ -45,9 +48,14 @@ async function verifyToken(token: string) {
   })
 }
 
+const setCookie = (name: string, value: string, maxAge: number) =>
+  `${name}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`
+
 // Auth0 Regular Web App flow: the SPA lands back on the site root with
 // ?code=... and forwards it here; the secret-bearing exchange stays
-// server-side and the session lives in an HttpOnly cookie.
+// server-side. The session is two HttpOnly cookies: the access token (JWT)
+// and the refresh token, which Token Vault exchanges for per-user GitHub
+// access tokens.
 async function handleAuth(req: Request, path: string): Promise<Response> {
   const sub = path.replace(/^\/auth/, "") || "/"
 
@@ -76,16 +84,19 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
     if (!res.ok) {
       return json({ error: "token exchange failed", detail: await res.text() }, 401)
     }
-    const { access_token, expires_in } = (await res.json()) as {
+    const { access_token, refresh_token, expires_in } = (await res.json()) as {
       access_token: string
+      refresh_token?: string
       expires_in: number
     }
-    return new Response(JSON.stringify({ ok: true }), {
+    const headers = new Headers({ "content-type": "application/json" })
+    headers.append("set-cookie", setCookie(COOKIE, access_token, expires_in ?? 86400))
+    if (refresh_token) {
+      headers.append("set-cookie", setCookie(REFRESH_COOKIE, refresh_token, 30 * 86400))
+    }
+    return new Response(JSON.stringify({ ok: true, offline: !!refresh_token }), {
       status: 200,
-      headers: {
-        "content-type": "application/json",
-        "set-cookie": `${COOKIE}=${access_token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${expires_in ?? 86400}`,
-      },
+      headers,
     })
   }
 
@@ -101,28 +112,13 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
   }
 
   if (sub === "/logout" && req.method === "POST") {
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "set-cookie": `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
-      },
-    })
+    const headers = new Headers({ "content-type": "application/json" })
+    headers.append("set-cookie", setCookie(COOKIE, "", 0))
+    headers.append("set-cookie", setCookie(REFRESH_COOKIE, "", 0))
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers })
   }
 
   return json({ error: "not found", path }, 404)
-}
-
-/** Auth0 user id (sub) of the current session, or null. */
-async function sessionSub(req: Request): Promise<string | null> {
-  const token = bearerOrCookieToken(req)
-  if (!token) return null
-  try {
-    const { payload } = await verifyToken(token)
-    return String(payload.sub)
-  } catch {
-    return null
-  }
 }
 
 async function authenticate(req: Request): Promise<Response | null> {
@@ -137,48 +133,26 @@ async function authenticate(req: Request): Promise<Response | null> {
   }
 }
 
+/** GitHub access token for the logged-in user, via Auth0 Token Vault. */
+async function githubToken(req: Request): Promise<string> {
+  const refresh = cookieValue(req, REFRESH_COOKIE)
+  if (!refresh) {
+    throw new GithubNotConnectedError(
+      "no refresh token in session — log in again (offline_access)"
+    )
+  }
+  return githubTokenForUser(refresh)
+}
+
+function githubError(e: unknown): Response {
+  if (e instanceof GithubNotConnectedError) {
+    return json({ error: "github_not_connected", detail: e.detail }, 428)
+  }
+  return json({ error: String(e) }, 502)
+}
+
 async function handleGithub(req: Request, path: string): Promise<Response> {
   const sub = path.replace(/^\/github/, "") || "/"
-
-  // GitHub redirects here after an app install / OAuth authorization
-  // (?code=…&installation_id=…&setup_action=install). Exchange the code
-  // server-side, then drop the user back into the app.
-  if (sub === "/callback" && req.method === "GET") {
-    const url = new URL(req.url)
-    const code = url.searchParams.get("code")
-    // The GitHub connection is bound to the logged-in Auth0 user: the OAuth
-    // code identifies the GitHub user, whose installations get linked to the
-    // Auth0 sub. Without a session there is nothing to link to.
-    const userSub = await sessionSub(req)
-    let outcome = "error"
-    if (!userSub) {
-      outcome = "login-required"
-    } else if (code && process.env.GITHUB_APP_CLIENT_ID && process.env.GITHUB_APP_CLIENT_SECRET) {
-      try {
-        const res = await fetch("https://github.com/login/oauth/access_token", {
-          method: "POST",
-          headers: { accept: "application/json", "content-type": "application/json" },
-          body: JSON.stringify({
-            client_id: process.env.GITHUB_APP_CLIENT_ID,
-            client_secret: process.env.GITHUB_APP_CLIENT_SECRET,
-            code,
-          }),
-        })
-        const body = (await res.json()) as { access_token?: string }
-        if (body.access_token) {
-          const ids = await userInstallationIds(body.access_token)
-          await linkInstallations(userSub, ids)
-          outcome = "connected"
-        }
-      } catch (e) {
-        console.error("github callback link failed:", e)
-      }
-    }
-    return new Response(null, {
-      status: 302,
-      headers: { location: `/?github=${outcome}` },
-    })
-  }
 
   // GitHub posts push/PR events here (configured on the GitHub App).
   if (sub === "/webhook" && req.method === "POST") {
@@ -187,26 +161,37 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
     return json({ ok: true })
   }
 
+  // Legacy GitHub App install/OAuth callback — repo access is user-scoped via
+  // Token Vault now, so this just drops the user back into the app.
+  if (sub === "/callback" && req.method === "GET") {
+    return new Response(null, { status: 302, headers: { location: "/" } })
+  }
+
+  // GET /github/repos — repos the logged-in GitHub user can access
+  if (sub === "/repos" && req.method === "GET") {
+    try {
+      const token = await githubToken(req)
+      return json(await listUserRepos(token))
+    } catch (e) {
+      return githubError(e)
+    }
+  }
+
   // /github/repos/:owner/:repo/(tree|file|save)
   const repoMatch = sub.match(/^\/repos\/([^/]+)\/([^/]+)\/(tree|file|save)$/)
   if (repoMatch) {
     const fullName = `${repoMatch[1]}/${repoMatch[2]}`
     const action = repoMatch[3]
     try {
-      // The repo must belong to an installation this user connected.
-      const userSub = await sessionSub(req)
-      const linked = userSub ? await getLinkedInstallations(userSub) : []
-      if (!linked.includes(await installationForRepo(fullName))) {
-        return json({ error: "repository not connected to this account" }, 403)
-      }
+      const token = await githubToken(req)
       if (action === "tree" && req.method === "GET") {
-        return json(await listMarkdownTree(fullName))
+        return json(await listMarkdownTree(token, fullName))
       }
       if (action === "file" && req.method === "GET") {
         const url = new URL(req.url)
         const filePath = url.searchParams.get("path")
         if (!filePath) return json({ error: "path required" }, 400)
-        return json(await getFile(fullName, filePath))
+        return json(await getFile(token, fullName, filePath))
       }
       if (action === "save" && req.method === "POST") {
         const body = (await req.json()) as {
@@ -221,23 +206,14 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
         }
         const message = body.message || `docs: update ${body.path}`
         if (body.mode === "pr") {
-          return json(await openPullRequest(fullName, body.path, body.content, message, body.sha))
+          return json(
+            await openPullRequest(token, fullName, body.path, body.content, message, body.sha)
+          )
         }
-        return json(await commitFile(fullName, body.path, body.content, message, body.sha))
+        return json(await commitFile(token, fullName, body.path, body.content, message, body.sha))
       }
     } catch (e) {
-      return json({ error: String(e) }, 502)
-    }
-  }
-
-  if (sub === "/installations" && req.method === "GET") {
-    try {
-      const userSub = await sessionSub(req)
-      const linked = userSub ? await getLinkedInstallations(userSub) : []
-      if (!linked.length) return json([])
-      return json(await listInstallations(linked))
-    } catch (e) {
-      return json({ error: String(e) }, 502)
+      return githubError(e)
     }
   }
 
@@ -248,8 +224,8 @@ export default async (req: Request, _context: Context) => {
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api/, "") || "/"
 
-  // Auth endpoints, the GitHub webhook, and the GitHub install/OAuth
-  // callback handle their own authentication.
+  // Auth endpoints, the GitHub webhook, and the install callback handle
+  // their own authentication.
   if (path.startsWith("/auth")) return handleAuth(req, path)
   if (path === "/github/webhook" || path === "/github/callback") {
     return handleGithub(req, path)

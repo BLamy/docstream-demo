@@ -1,9 +1,3 @@
-export interface Installation {
-  id: number
-  account: string
-  repositories: string[]
-}
-
 export interface RepoTree {
   branch: string
   files: string[]
@@ -42,7 +36,7 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  githubInstallations: () => http<Installation[]>("/github/installations"),
+  githubRepos: () => http<string[]>("/github/repos"),
   repoTree: (repo: string) => http<RepoTree>(`/github/repos/${repo}/tree`),
   repoFile: (repo: string, path: string) =>
     http<RepoFile>(`/github/repos/${repo}/file?path=${encodeURIComponent(path)}`),

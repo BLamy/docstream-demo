@@ -13,7 +13,6 @@ import {
   Loader2,
   LogOut,
   PenLine,
-  Plus,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -27,12 +26,6 @@ import { Input } from "@/components/ui/input"
 
 type View = "edit" | "preview" | "markdown"
 
-// Public identifier of the blamy-notes GitHub App. The OAuth authorize URL
-// links the visitor's GitHub installations to their logged-in account, even
-// when the app is already installed.
-const GITHUB_APP_CLIENT_ID = "Iv23lilBbEGGBrzJMFw3"
-const CONNECT_GITHUB_URL = `https://github.com/login/oauth/authorize?client_id=${GITHUB_APP_CLIENT_ID}`
-const INSTALL_GITHUB_URL = "https://github.com/apps/blamy-notes/installations/new"
 
 // ---------- File tree ----------
 
@@ -118,28 +111,17 @@ export default function App() {
   const [filePath, setFilePath] = useState<string | null>(null)
   const [view, setView] = useState<View>("edit")
 
-  const installations = useQuery({
-    queryKey: ["installations"],
-    queryFn: api.githubInstallations,
+  // Repos come from the logged-in user's own GitHub identity (Auth0 Token
+  // Vault exchanges the session's refresh token for their GitHub token).
+  const reposQuery = useQuery({
+    queryKey: ["repos"],
+    queryFn: api.githubRepos,
     staleTime: 5 * 60_000,
+    retry: false,
   })
-
-  // Landing back from the GitHub connect/install callback.
-  useEffect(() => {
-    const url = new URL(window.location.href)
-    const github = url.searchParams.get("github")
-    if (!github) return
-    if (github === "connected") toast.success("GitHub connected to this account.")
-    else if (github === "login-required") toast.error("Log in first, then connect GitHub.")
-    else toast.error("GitHub connection failed — try again.")
-    for (const k of ["github", "installation_id", "setup_action"]) url.searchParams.delete(k)
-    window.history.replaceState({}, "", url)
-    installations.refetch()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const repos = useMemo(
-    () => (installations.data ?? []).flatMap((i) => i.repositories),
-    [installations.data]
-  )
+  const repos = useMemo(() => reposQuery.data ?? [], [reposQuery.data])
+  const githubNotConnected =
+    reposQuery.isError && String(reposQuery.error).includes("github_not_connected")
 
   const tree = useQuery({
     queryKey: ["tree", repo],
@@ -242,15 +224,22 @@ export default function App() {
 
         <div className="gb-sidebar-scroll">
           <div className="gb-section-label">Repositories</div>
-          {installations.isLoading && (
+          {reposQuery.isLoading && (
             <div className="gb-sidebar-note">Loading repositories…</div>
           )}
-          {installations.data && repos.length === 0 && (
+          {githubNotConnected && (
             <div className="gb-sidebar-note">
-              No repositories connected to this account yet.{" "}
-              <a href={CONNECT_GITHUB_URL}>Connect GitHub</a> (or{" "}
-              <a href={INSTALL_GITHUB_URL}>install the app</a> first if you never have).
+              This login isn't connected to GitHub. Log out and sign in with{" "}
+              <strong>Continue with GitHub</strong> to see your repositories.
             </div>
+          )}
+          {reposQuery.isError && !githubNotConnected && (
+            <div className="gb-sidebar-note">
+              Failed to load repositories: {String(reposQuery.error)}
+            </div>
+          )}
+          {reposQuery.data && repos.length === 0 && (
+            <div className="gb-sidebar-note">Your GitHub account has no repositories.</div>
           )}
           {repos.map((r) => {
             const [owner, name] = r.split("/")
@@ -289,9 +278,6 @@ export default function App() {
               </div>
             )
           })}
-          <a className="gb-page-add" href={INSTALL_GITHUB_URL}>
-            <Plus className="size-4" /> Add repository
-          </a>
         </div>
 
         <div className="gb-sidebar-foot">

@@ -15,7 +15,9 @@ function login() {
     response_type: "code",
     client_id: clientId,
     redirect_uri: window.location.origin,
-    scope: "openid profile email",
+    // offline_access yields a refresh token, which Token Vault exchanges
+    // for the user's GitHub access token server-side.
+    scope: "openid profile email offline_access",
     state,
     // Always show the login screen instead of silently reusing the SSO session.
     prompt: "login",
