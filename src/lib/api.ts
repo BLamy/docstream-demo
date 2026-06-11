@@ -1,4 +1,19 @@
-import type { Label, Project, Task } from "./types"
+export interface PageMeta {
+  id: string
+  title: string
+  path: string
+  order: number
+}
+
+export interface Page extends PageMeta {
+  markdown: string
+}
+
+export interface Installation {
+  id: number
+  account: string
+  repositories: string[]
+}
 
 const BASE = "/api"
 
@@ -9,27 +24,38 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!res.ok) {
-    throw new Error(`Request failed: ${res.status} ${res.statusText}`)
+    let detail = `${res.status} ${res.statusText}`
+    try {
+      const body = (await res.json()) as { error?: string }
+      if (body.error) detail = body.error
+    } catch {
+      /* not json */
+    }
+    throw new Error(detail)
   }
   return res.json() as Promise<T>
 }
 
 export const api = {
-  getProjects: () => http<Project[]>("/projects"),
-  getLabels: () => http<Label[]>("/labels"),
-  getTasks: (projectId?: string) =>
-    http<Task[]>(`/tasks${projectId ? `?projectId=${projectId}` : ""}`),
-  search: (q: string) =>
-    http<{ query: string; results: Task[] }>(
-      `/search?q=${encodeURIComponent(q)}`
-    ),
-  createTask: (input: Partial<Task>) =>
-    http<Task>("/tasks", { method: "POST", body: JSON.stringify(input) }),
-  updateTask: (id: string, patch: Partial<Task>) =>
-    http<Task>(`/tasks/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(patch),
+  getPages: () => http<PageMeta[]>("/pages"),
+  getPage: (id: string) => http<Page>(`/pages/${id}`),
+  createPage: (input: { title: string }) =>
+    http<Page>("/pages", { method: "POST", body: JSON.stringify(input) }),
+  updatePage: (id: string, patch: Partial<Page>) =>
+    http<Page>(`/pages/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deletePage: (id: string) => http<Page>(`/pages/${id}`, { method: "DELETE" }),
+
+  githubInstallations: () => http<Installation[]>("/github/installations"),
+  githubSync: (repo: string) =>
+    http<{ committed: string[] }>("/github/sync", {
+      method: "POST",
+      body: JSON.stringify({ repo }),
     }),
-  deleteTask: (id: string) =>
-    http<Task>(`/tasks/${id}`, { method: "DELETE" }),
+  githubPull: (repo: string) =>
+    http<{ imported: number }>("/github/pull", {
+      method: "POST",
+      body: JSON.stringify({ repo }),
+    }),
+
+  logout: () => http<{ ok: true }>("/auth/logout", { method: "POST" }),
 }

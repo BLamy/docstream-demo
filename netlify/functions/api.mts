@@ -1,21 +1,14 @@
 import type { Config, Context } from "@netlify/functions"
 import { createRemoteJWKSet, jwtVerify } from "jose"
-import {
-  tasks,
-  projects,
-  labels,
-  makeId,
-  type Priority,
-  type Task,
-} from "./lib/data.ts"
+
+import { pages, makeId, type Page } from "./lib/pages.ts"
+import { listInstallations, pushFiles, pullFiles } from "./lib/github.ts"
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json" },
   })
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN || "webreplay.us.auth0.com"
 const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE
@@ -124,87 +117,132 @@ async function authenticate(req: Request): Promise<Response | null> {
   }
 }
 
+const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "page"
+
+async function handleGithub(req: Request, path: string): Promise<Response> {
+  const sub = path.replace(/^\/github/, "") || "/"
+
+  // GitHub posts push/PR events here (configured on the GitHub App).
+  if (sub === "/webhook" && req.method === "POST") {
+    const event = req.headers.get("x-github-event") ?? "unknown"
+    console.log(`github webhook: ${event}`)
+    return json({ ok: true })
+  }
+
+  if (sub === "/installations" && req.method === "GET") {
+    try {
+      return json(await listInstallations())
+    } catch (e) {
+      return json({ error: String(e) }, 502)
+    }
+  }
+
+  if (sub === "/sync" && req.method === "POST") {
+    const { repo } = (await req.json()) as { repo?: string }
+    if (!repo) return json({ error: "repo required (owner/name)" }, 400)
+    try {
+      const files = pages.map((p) => ({ path: p.path, content: p.markdown }))
+      const result = await pushFiles(repo, files, "docs: sync from blamy-notes")
+      return json(result)
+    } catch (e) {
+      return json({ error: String(e) }, 502)
+    }
+  }
+
+  if (sub === "/pull" && req.method === "POST") {
+    const { repo } = (await req.json()) as { repo?: string }
+    if (!repo) return json({ error: "repo required (owner/name)" }, 400)
+    try {
+      const files = await pullFiles(repo)
+      let imported = 0
+      for (const file of files) {
+        const title =
+          file.content.match(/^#\s+(.+)$/m)?.[1] ?? file.path.replace(/\.md$/, "")
+        const existing = pages.find((p) => p.path === file.path)
+        if (existing) {
+          existing.markdown = file.content
+          existing.title = title
+        } else {
+          pages.push({
+            id: makeId(),
+            title,
+            path: file.path,
+            order: pages.length + 1,
+            markdown: file.content,
+          })
+        }
+        imported++
+      }
+      return json({ imported })
+    } catch (e) {
+      return json({ error: String(e) }, 502)
+    }
+  }
+
+  return json({ error: "not found", path }, 404)
+}
+
 export default async (req: Request, _context: Context) => {
   const url = new URL(req.url)
-  const requestPath = url.pathname.replace(/^\/api/, "") || "/"
+  const path = url.pathname.replace(/^\/api/, "") || "/"
+  const method = req.method
 
-  // Auth endpoints handle their own (lack of) authentication.
-  if (requestPath.startsWith("/auth")) {
-    return handleAuth(req, requestPath)
-  }
+  // Auth endpoints and the GitHub webhook handle their own authentication.
+  if (path.startsWith("/auth")) return handleAuth(req, path)
+  if (path === "/github/webhook") return handleGithub(req, path)
 
   const unauthorized = await authenticate(req)
   if (unauthorized) return unauthorized
 
-  const path = url.pathname.replace(/^\/api/, "") || "/"
-  const method = req.method
+  if (path.startsWith("/github")) return handleGithub(req, path)
 
-  // GET /api/projects
-  if (path === "/projects" && method === "GET") {
-    return json(projects)
+  // GET /api/pages — sidebar tree (no markdown bodies)
+  if (path === "/pages" && method === "GET") {
+    return json(
+      [...pages]
+        .sort((a, b) => a.order - b.order)
+        .map(({ id, title, path: p, order }) => ({ id, title, path: p, order }))
+    )
   }
 
-  // GET /api/labels
-  if (path === "/labels" && method === "GET") {
-    return json(labels)
-  }
-
-  // GET /api/search?q=
-  if (path === "/search" && method === "GET") {
-    const q = (url.searchParams.get("q") || "").trim().toLowerCase()
-    // Artificial latency: shorter queries take LONGER to come back, so
-    // rapidly-typed queries can resolve out of order.
-    const delay = Math.max(80, 700 - q.length * 90)
-    await sleep(delay)
-    const results = q
-      ? tasks.filter((t) => t.content.toLowerCase().includes(q))
-      : []
-    return json({ query: q, results })
-  }
-
-  // /tasks collection
-  if (path === "/tasks" && method === "GET") {
-    const projectId = url.searchParams.get("projectId")
-    const list = projectId
-      ? tasks.filter((t) => t.projectId === projectId)
-      : tasks
-    return json(list)
-  }
-
-  if (path === "/tasks" && method === "POST") {
-    const body = (await req.json()) as Partial<Task>
-    const task: Task = {
+  if (path === "/pages" && method === "POST") {
+    const body = (await req.json()) as Partial<Page>
+    const title = (body.title || "Untitled").trim()
+    const page: Page = {
       id: makeId(),
-      content: (body.content || "").trim(),
-      description: body.description ?? null,
-      projectId: body.projectId || "inbox",
-      priority: (body.priority as Priority) || 4,
-      dueDate: body.dueDate ?? null,
-      completed: false,
-      labels: body.labels || [],
-      order: tasks.length + 1,
-      createdAt: new Date().toISOString(),
+      title,
+      path: body.path || `${slugify(title)}.md`,
+      order: pages.length + 1,
+      markdown: body.markdown ?? `# ${title}\n`,
     }
-    tasks.push(task)
-    return json(task, 201)
+    pages.push(page)
+    return json(page, 201)
   }
 
-  // /tasks/:id
-  const taskMatch = path.match(/^\/tasks\/([^/]+)$/)
-  if (taskMatch) {
-    const id = taskMatch[1]
-    const idx = tasks.findIndex((t) => t.id === id)
-    if (idx === -1) return json({ error: "not found" }, 404)
+  const pageMatch = path.match(/^\/pages\/([^/]+)$/)
+  if (pageMatch) {
+    const page = pages.find((p) => p.id === pageMatch[1])
+    if (!page) return json({ error: "not found" }, 404)
+
+    if (method === "GET") return json(page)
 
     if (method === "PATCH") {
-      const body = (await req.json()) as Partial<Task>
-      tasks[idx] = { ...tasks[idx], ...body, id }
-      return json(tasks[idx])
+      const body = (await req.json()) as Partial<Page>
+      if (typeof body.title === "string") page.title = body.title
+      if (typeof body.markdown === "string") page.markdown = body.markdown
+      if (typeof body.path === "string") page.path = body.path
+      if (typeof body.order === "number") page.order = body.order
+      return json(page)
     }
 
     if (method === "DELETE") {
-      const [removed] = tasks.splice(idx, 1)
-      return json(removed)
+      const idx = pages.findIndex((p) => p.id === page.id)
+      pages.splice(idx, 1)
+      return json(page)
     }
   }
 
