@@ -31,6 +31,10 @@ const paragraphPM = (children: Inline[]): PMNode => {
   return content.length ? { type: "paragraph", content } : { type: "paragraph" }
 }
 
+// Containers require block+ content; empty GitBook blocks get a placeholder paragraph.
+const blocksPM = (children: Block[]): PMNode[] =>
+  children.length ? children.map(blockToPM) : [{ type: "paragraph" }]
+
 function listItemToPM(item: ListItemNode, task: boolean): PMNode {
   return {
     type: task ? "taskItem" : "listItem",
@@ -52,21 +56,21 @@ function blockToPM(b: Block): PMNode {
         content: b.code ? [{ type: "text", text: b.code }] : [],
       }
     case "hint":
-      return { type: "gbHint", attrs: { style: b.style }, content: b.children.map(blockToPM) }
+      return { type: "gbHint", attrs: { style: b.style }, content: blocksPM(b.children) }
     case "tabs":
       return {
         type: "gbTabs",
         content: b.tabs.map((t) => ({
           type: "gbTab",
           attrs: { title: t.title },
-          content: t.children.map(blockToPM),
+          content: blocksPM(t.children),
         })),
       }
     case "expandable":
       return {
         type: "gbExpandable",
         attrs: { summary: b.summary },
-        content: b.children.map(blockToPM),
+        content: blocksPM(b.children),
       }
     case "stepper":
       return {
@@ -74,7 +78,7 @@ function blockToPM(b: Block): PMNode {
         content: b.steps.map((s) => ({
           type: "gbStep",
           attrs: { title: s.title },
-          content: s.children.length ? s.children.map(blockToPM) : [{ type: "paragraph" }],
+          content: blocksPM(s.children),
         })),
       }
     case "embed":
@@ -84,7 +88,7 @@ function blockToPM(b: Block): PMNode {
     case "columns":
       return {
         type: "gbColumns",
-        content: b.columns.map((c) => ({ type: "gbColumn", content: c.children.map(blockToPM) })),
+        content: b.columns.map((c) => ({ type: "gbColumn", content: blocksPM(c.children) })),
       }
     case "figure":
       return { type: "gbFigure", attrs: { src: b.src, alt: b.alt, caption: b.caption } }
@@ -94,12 +98,13 @@ function blockToPM(b: Block): PMNode {
         content: b.items.map((item) => listItemToPM(item, b.task)),
       }
     case "blockquote":
-      return { type: "blockquote", content: b.children.map(blockToPM) }
+      return { type: "blockquote", content: blocksPM(b.children) }
     case "divider":
       return { type: "horizontalRule" }
     case "table":
       return {
         type: "table",
+        ...(b.view ? { attrs: { view: b.view } } : {}),
         content: [
           {
             type: "tableRow",
@@ -116,6 +121,27 @@ function blockToPM(b: Block): PMNode {
       }
     case "math":
       return { type: "gbMath", attrs: { formula: b.formula } }
+    case "updates":
+      return {
+        type: "gbUpdates",
+        attrs: { format: b.format },
+        content: b.updates.map((u) => ({
+          type: "gbUpdate",
+          attrs: { date: u.date },
+          content: blocksPM(u.children),
+        })),
+      }
+    case "openapi-operation":
+      return {
+        type: "gbOpenapi",
+        attrs: {
+          spec: b.spec,
+          path: b.path,
+          method: b.method,
+          specUrl: b.specUrl,
+          label: b.label,
+        },
+      }
   }
 }
 
@@ -221,6 +247,25 @@ function pmToBlock(n: PMNode): Block | null {
       }
     case "gbMath":
       return { type: "math", formula: String(n.attrs?.formula ?? "") }
+    case "gbUpdates":
+      return {
+        type: "updates",
+        format: (n.attrs?.format as string) || null,
+        updates: (n.content ?? []).map((u) => ({
+          type: "update",
+          date: String(u.attrs?.date ?? ""),
+          children: pmToBlocks(u.content),
+        })),
+      }
+    case "gbOpenapi":
+      return {
+        type: "openapi-operation",
+        spec: String(n.attrs?.spec ?? ""),
+        path: String(n.attrs?.path ?? ""),
+        method: String(n.attrs?.method ?? ""),
+        specUrl: String(n.attrs?.specUrl ?? ""),
+        label: String(n.attrs?.label ?? ""),
+      }
     case "bulletList":
     case "orderedList":
     case "taskList": {
@@ -244,10 +289,12 @@ function pmToBlock(n: PMNode): Block | null {
     case "table": {
       const rows = n.content ?? []
       const [head, ...body] = rows
+      const view = n.attrs?.view as string | undefined
       return {
         type: "table",
         header: (head?.content ?? []).map(pmCellToInline),
         rows: body.map((r) => (r.content ?? []).map(pmCellToInline)),
+        ...(view ? { view } : {}),
       }
     }
     default:

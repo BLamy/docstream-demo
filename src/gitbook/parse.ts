@@ -7,8 +7,23 @@ import type {
   ListItemNode,
   StepNode,
   TabNode,
+  UpdateNode,
 } from "./ast"
 import { parseInline } from "./inline"
+
+// Minimal HTML-inline → markdown-inline bridge for HTML table cells.
+function htmlToInlineMd(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<strong>(.*?)<\/strong>/gis, "**$1**")
+    .replace(/<b>(.*?)<\/b>/gis, "**$1**")
+    .replace(/<em>(.*?)<\/em>/gis, "_$1_")
+    .replace(/<i>(.*?)<\/i>/gis, "_$1_")
+    .replace(/<code>(.*?)<\/code>/gis, "`$1`")
+    .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gis, "[$2]($1)")
+    .replace(/<[^>]+>/g, "")
+    .trim()
+}
 
 const TEMPLATE_RE = /^\s*\{%\s*(\S+?)(\s+[^%]*?)?\s*%\}\s*$/
 
@@ -157,6 +172,32 @@ export function parseBlocks(lines: string[]): Block[] {
         continue
       }
 
+      if (tag.name === "updates") {
+        const { body, next } = collectUntil(lines, i + 1, "updates")
+        blocks.push({
+          type: "updates",
+          format: tag.attrs.format ?? null,
+          updates: parseUpdates(body),
+        })
+        i = next
+        continue
+      }
+
+      if (tag.name === "openapi-operation" || tag.name === "openapi") {
+        const { body, next } = collectUntil(lines, i + 1, tag.name)
+        const link = body.join(" ").match(/\[([^\]]*)\]\(([^)\s]+)\)/)
+        blocks.push({
+          type: "openapi-operation",
+          spec: tag.attrs.spec ?? "",
+          path: tag.attrs.path ?? "",
+          method: tag.attrs.method ?? "",
+          specUrl: link?.[2] ?? "",
+          label: link?.[1] ?? "",
+        })
+        i = next
+        continue
+      }
+
       if (tag.name === "file") {
         // Render file blocks as content-refs for now — same shape, different chrome.
         blocks.push({ type: "content-ref", url: tag.attrs.src ?? "", children: parseInline(tag.attrs.caption ?? tag.attrs.src ?? "") })
@@ -189,6 +230,44 @@ export function parseBlocks(lines: string[]): Block[] {
       const { body, next } = collectHtmlUntil(lines, bodyStart, "</details>")
       blocks.push({ type: "expandable", summary, children: parseBlocks(body) })
       i = next
+      continue
+    }
+
+    // <table …>…</table> — GitBook exports complex/cards tables as HTML
+    if (/^<table[\s>]/i.test(trimmed)) {
+      flushParagraph()
+      const chunkLines = [line]
+      let j = i
+      while (!chunkLines.join("\n").includes("</table>") && j + 1 < lines.length) {
+        j++
+        chunkLines.push(lines[j])
+      }
+      const chunk = chunkLines.join("\n")
+      const view = chunk.match(/<table[^>]*data-view="([^"]*)"/i)?.[1]
+      const rowsHtml = [...chunk.matchAll(/<tr[^>]*>(.*?)<\/tr>/gis)].map((m) => m[1])
+      const parseCells = (rowHtml: string): Inline[][] =>
+        [...rowHtml.matchAll(/<t[dh][^>]*>(.*?)<\/t[dh]>/gis)].map((m) =>
+          parseInline(htmlToInlineMd(m[1]))
+        )
+      const allRows = rowsHtml.map(parseCells)
+      const [header, ...rest] = allRows.length ? allRows : [[]]
+      blocks.push({
+        type: "table",
+        header: header ?? [],
+        rows: rest,
+        ...(view ? { view } : {}),
+      })
+      i = j + 1
+      continue
+    }
+
+    // standalone <img …> line (e.g. GitBook drawings)
+    const soloHtmlImg = trimmed.match(/^<img[^>]*src="([^"]*)"[^>]*>$/i)
+    if (soloHtmlImg) {
+      flushParagraph()
+      const alt = trimmed.match(/alt="([^"]*)"/i)?.[1] ?? ""
+      blocks.push({ type: "figure", src: soloHtmlImg[1], alt, caption: "" })
+      i++
       continue
     }
 
@@ -259,14 +338,14 @@ export function parseBlocks(lines: string[]): Block[] {
       continue
     }
 
-    // heading
-    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/)
+    // heading (GitBook exports can contain empty headings like a bare "##")
+    const heading = trimmed.match(/^(#{1,6})(?:\s+(.*))?$/)
     if (heading) {
       flushParagraph()
       blocks.push({
         type: "heading",
         level: heading[1].length as 1 | 2 | 3 | 4 | 5 | 6,
-        children: parseInline(heading[2]),
+        children: parseInline(heading[2] ?? ""),
       })
       i++
       continue
@@ -390,6 +469,26 @@ function parseSteps(lines: string[]): StepNode[] {
     }
   }
   return steps
+}
+
+function parseUpdates(lines: string[]): UpdateNode[] {
+  const updates: UpdateNode[] = []
+  let i = 0
+  while (i < lines.length) {
+    const tag = templateTag(lines[i])
+    if (tag?.name === "update") {
+      const { body, next } = collectUntil(lines, i + 1, "update")
+      updates.push({
+        type: "update",
+        date: tag.attrs.date ?? "",
+        children: parseBlocks(body),
+      })
+      i = next
+    } else {
+      i++
+    }
+  }
+  return updates
 }
 
 function parseColumns(lines: string[]): ColumnNode[] {

@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 
 import type { HintStyle } from "@/gitbook/ast"
+import { OpenApiOperation } from "@/openapi/OpenApiOperation"
 
 // ---------- Hint ----------
 
@@ -561,6 +562,126 @@ export const GbCodeBlock = CodeBlock.extend({
   },
 })
 
+// ---------- Updates (changelog) ----------
+
+export const GbUpdates = Node.create({
+  name: "gbUpdates",
+  group: "block",
+  content: "gbUpdate+",
+  defining: true,
+  addAttributes() {
+    return { format: { default: null } }
+  },
+  parseHTML() {
+    return [{ tag: "div[data-gb-updates]" }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-gb-updates": "", class: "gb-updates" }), 0]
+  },
+})
+
+function UpdateView({ node, updateAttributes, editor }: NodeViewProps) {
+  return (
+    <NodeViewWrapper className="gb-update">
+      <div className="gb-update-date" contentEditable={false}>
+        {editor.isEditable ? (
+          <input
+            type="date"
+            className="gb-inline-input"
+            value={node.attrs.date}
+            onChange={(e) => updateAttributes({ date: e.target.value })}
+          />
+        ) : (
+          <span>{node.attrs.date}</span>
+        )}
+      </div>
+      <NodeViewContent className="gb-update-body" />
+    </NodeViewWrapper>
+  )
+}
+
+export const GbUpdate = Node.create({
+  name: "gbUpdate",
+  content: "block+",
+  defining: true,
+  isolating: true,
+  addAttributes() {
+    return { date: { default: "" } }
+  },
+  parseHTML() {
+    return [{ tag: "div[data-gb-update]" }]
+  },
+  renderHTML({ HTMLAttributes, node }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-gb-update": node.attrs.date }), 0]
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(UpdateView)
+  },
+})
+
+// ---------- OpenAPI operation ----------
+
+function OpenapiView({ node, updateAttributes, editor }: NodeViewProps) {
+  const { spec, path, method, specUrl } = node.attrs
+  return (
+    <NodeViewWrapper className="gb-openapi" contentEditable={false}>
+      {editor.isEditable && (
+        <div className="gb-openapi-fields">
+          <input
+            className="gb-inline-input"
+            value={spec}
+            placeholder="spec name"
+            onChange={(e) => updateAttributes({ spec: e.target.value })}
+          />
+          <input
+            className="gb-inline-input"
+            value={method}
+            placeholder="get"
+            onChange={(e) => updateAttributes({ method: e.target.value })}
+          />
+          <input
+            className="gb-inline-input gb-openapi-path"
+            value={path}
+            placeholder="/path"
+            onChange={(e) => updateAttributes({ path: e.target.value })}
+          />
+          <input
+            className="gb-inline-input gb-openapi-url"
+            value={specUrl}
+            placeholder="https://…/openapi.yaml"
+            onChange={(e) => updateAttributes({ specUrl: e.target.value })}
+          />
+        </div>
+      )}
+      <OpenApiOperation specUrl={specUrl} path={path} method={method || "get"} />
+    </NodeViewWrapper>
+  )
+}
+
+export const GbOpenapi = Node.create({
+  name: "gbOpenapi",
+  group: "block",
+  atom: true,
+  addAttributes() {
+    return {
+      spec: { default: "" },
+      path: { default: "" },
+      method: { default: "get" },
+      specUrl: { default: "" },
+      label: { default: "" },
+    }
+  },
+  parseHTML() {
+    return [{ tag: "div[data-gb-openapi]" }]
+  },
+  renderHTML({ HTMLAttributes, node }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-gb-openapi": node.attrs.path })]
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(OpenapiView)
+  },
+})
+
 export const gitbookNodes = [
   GbHint,
   GbTabs,
@@ -574,4 +695,7 @@ export const gitbookNodes = [
   GbColumn,
   GbFigure,
   GbMath,
+  GbUpdates,
+  GbUpdate,
+  GbOpenapi,
 ]

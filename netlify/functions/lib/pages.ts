@@ -151,7 +151,49 @@ $$
 That's all of them.
 `
 
+const apiAndChangelog = `# API & changelog
+
+Blocks from real GitBook exports: OpenAPI operations, changelogs, mermaid diagrams, and card tables.
+
+## OpenAPI
+
+{% openapi-operation spec="gitbook-petstore" path="/store/orders" method="get" %}
+[OpenAPI gitbook-petstore](https://gitbookio.github.io/onboarding-template-images/gitbook-petstore.yaml)
+{% endopenapi-operation %}
+
+## Changelog
+
+{% updates format="full" %}
+{% update date="2026-06-11" %}
+## OpenAPI support shipped
+
+Operations render with auth, parameters, responses, and samples.
+{% endupdate %}
+
+{% update date="2026-06-10" %}
+## GitBook clone launched
+
+The editor, preview, and git sync went live.
+{% endupdate %}
+{% endupdates %}
+
+## Mermaid
+
+\`\`\`mermaid
+graph TD
+  Markdown --> AST
+  AST --> Editor
+  AST --> Docs
+  Editor --> AST
+\`\`\`
+
+## Cards
+
+<table data-view="cards"><thead><tr><th></th></tr></thead><tbody><tr><td><strong>Editor</strong> rich blocks with TipTap</td></tr><tr><td><strong>Docs</strong> a published site view</td></tr><tr><td><strong>Git sync</strong> markdown in your repo</td></tr></tbody></table>
+`
+
 export const pages: Page[] = [
   { id: "welcome", title: "Welcome", path: "README.md", order: 1, markdown: welcome },
   { id: "blocks", title: "All blocks", path: "blocks.md", order: 2, markdown: blocks },
+  { id: "api", title: "API & changelog", path: "api.md", order: 3, markdown: apiAndChangelog },
 ]

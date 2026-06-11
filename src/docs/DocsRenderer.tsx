@@ -9,6 +9,9 @@ import {
 } from "lucide-react"
 
 import type { Block, DocumentNode, Inline } from "@/gitbook/ast"
+import { parseMarkdown } from "@/gitbook/parse"
+import { OpenApiOperation } from "@/openapi/OpenApiOperation"
+import { Mermaid } from "./Mermaid"
 
 function InlineText({ nodes }: { nodes: Inline[] }) {
   return (
@@ -82,6 +85,7 @@ function BlockView({ block }: { block: Block }) {
       )
     }
     case "code":
+      if (block.language === "mermaid") return <Mermaid code={block.code} />
       return (
         <div className="docs-code">
           {(block.title || block.language) && (
@@ -202,6 +206,22 @@ function BlockView({ block }: { block: Block }) {
     case "divider":
       return <hr />
     case "table":
+      if (block.view === "cards") {
+        const cards = block.rows.length ? block.rows : [block.header]
+        return (
+          <div className="docs-cards">
+            {cards.map((row, i) => (
+              <div key={i} className="docs-card">
+                {row.map((cell, j) => (
+                  <div key={j} className={j === 0 ? "docs-card-title" : "docs-card-body"}>
+                    <InlineText nodes={cell} />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )
+      }
       return (
         <table className="docs-table">
           <thead>
@@ -228,6 +248,27 @@ function BlockView({ block }: { block: Block }) {
       )
     case "math":
       return <pre className="docs-math">{block.formula}</pre>
+    case "updates":
+      return (
+        <div className="docs-updates">
+          {block.updates.map((u, i) => (
+            <div key={i} className="docs-update">
+              <div className="docs-update-date">{u.date}</div>
+              <div className="docs-update-body">
+                <Blocks blocks={u.children} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )
+    case "openapi-operation":
+      return (
+        <OpenApiOperation
+          specUrl={block.specUrl}
+          path={block.path}
+          method={block.method || "get"}
+        />
+      )
   }
 }
 
@@ -239,6 +280,12 @@ function Blocks({ blocks, inline }: { blocks: Block[]; inline?: boolean }) {
       ))}
     </div>
   )
+}
+
+// Renders a markdown string inline — used for embedded markdown like
+// OpenAPI descriptions, which can themselves contain GitBook blocks.
+export function MarkdownContent({ markdown }: { markdown: string }) {
+  return <Blocks blocks={parseMarkdown(markdown).children} />
 }
 
 export function DocsRenderer({ doc }: { doc: DocumentNode }) {

@@ -121,3 +121,28 @@ if (md1 !== md2) {
 const blockTypes = ast1.children.map((b) => b.type)
 console.log("✓ round-trip stable")
 console.log("block types:", blockTypes.join(", "))
+
+// --- Real GitBook export fixture ---
+import { readFileSync } from "node:fs"
+const fixture = readFileSync(new URL("./fixtures/gitbook-export.md", import.meta.url), "utf8")
+const f1 = parseMarkdown(fixture)
+const fmd1 = serializeMarkdown(f1)
+const f2 = parseMarkdown(fmd1)
+if (JSON.stringify(f1) !== JSON.stringify(f2)) {
+  console.error("✗ fixture AST not stable")
+  const a = JSON.stringify(f1, null, 1).split("\n")
+  const b = JSON.stringify(f2, null, 1).split("\n")
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] !== b[i]) {
+      console.error(`first diff at line ${i}:\n  1: ${a[i]}\n  2: ${b[i]}`)
+      break
+    }
+  }
+  process.exit(1)
+}
+if (fmd1 !== serializeMarkdown(f2)) {
+  console.error("✗ fixture markdown not stable")
+  process.exit(1)
+}
+console.log("✓ gitbook export fixture round-trip stable")
+console.log("fixture block types:", f1.children.map((b) => b.type).join(", "))

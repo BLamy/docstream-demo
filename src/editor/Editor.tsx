@@ -3,7 +3,7 @@ import { EditorContent, useEditor, type Editor as TiptapEditor } from "@tiptap/r
 import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
 import { TaskItem, TaskList } from "@tiptap/extension-list"
-import { TableKit } from "@tiptap/extension-table"
+import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table"
 import {
   Bold,
   Code as CodeIcon,
@@ -27,7 +27,10 @@ import {
   SquareChevronDown,
   Strikethrough,
   Table as TableIcon,
+  Megaphone,
   MonitorPlay,
+  Webhook,
+  Workflow,
 } from "lucide-react"
 
 import { parseMarkdown } from "@/gitbook/parse"
@@ -39,6 +42,13 @@ interface Props {
   markdown: string
   onChange: (markdown: string) => void
 }
+
+// Carries GitBook's data-view (e.g. "cards") through the editor untouched.
+const GbTable = Table.extend({
+  addAttributes() {
+    return { ...this.parent?.(), view: { default: null } }
+  },
+})
 
 const para = (text = ""): PMNode =>
   text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" }
@@ -198,6 +208,56 @@ function Toolbar({ editor }: { editor: TiptapEditor }) {
       <ToolbarButton title="Table" onClick={() => chain().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run()}>
         <TableIcon className="size-4" />
       </ToolbarButton>
+      <ToolbarButton
+        title="Updates (changelog)"
+        onClick={() =>
+          insert({
+            type: "gbUpdates",
+            attrs: { format: "full" },
+            content: [
+              {
+                type: "gbUpdate",
+                attrs: { date: new Date().toISOString().slice(0, 10) },
+                content: [
+                  { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "What changed" }] },
+                  para(),
+                ],
+              },
+            ],
+          })
+        }
+      >
+        <Megaphone className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="OpenAPI operation"
+        onClick={() =>
+          insert({
+            type: "gbOpenapi",
+            attrs: {
+              spec: "",
+              path: "/",
+              method: "get",
+              specUrl: "",
+              label: "",
+            },
+          })
+        }
+      >
+        <Webhook className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Mermaid diagram"
+        onClick={() =>
+          insert({
+            type: "codeBlock",
+            attrs: { language: "mermaid", title: null, lineNumbers: false },
+            content: [{ type: "text", text: "graph TD\n  A --> B" }],
+          })
+        }
+      >
+        <Workflow className="size-4" />
+      </ToolbarButton>
     </div>
   )
 }
@@ -213,7 +273,10 @@ export function GitbookEditor({ markdown, onChange }: Props) {
       GbCodeBlock,
       TaskList,
       TaskItem.configure({ nested: true }),
-      TableKit.configure({ table: { resizable: false } }),
+      GbTable.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       Placeholder.configure({ placeholder: "Write, or insert a block from the toolbar…" }),
       ...gitbookNodes,
     ],

@@ -122,6 +122,29 @@ export interface TableNode {
   type: "table"
   header: Inline[][]
   rows: Inline[][][]
+  /** GitBook table view, e.g. "cards" for <table data-view="cards"> */
+  view?: string
+}
+
+export interface UpdateNode {
+  type: "update"
+  date: string
+  children: Block[]
+}
+
+export interface UpdatesNode {
+  type: "updates"
+  format: string | null
+  updates: UpdateNode[]
+}
+
+export interface OpenApiOperationNode {
+  type: "openapi-operation"
+  spec: string
+  path: string
+  method: string
+  specUrl: string
+  label: string
 }
 
 export interface MathNode {
@@ -146,6 +169,8 @@ export type Block =
   | DividerNode
   | TableNode
   | MathNode
+  | UpdatesNode
+  | OpenApiOperationNode
 
 export interface DocumentNode {
   type: "doc"

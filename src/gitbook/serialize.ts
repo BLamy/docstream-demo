@@ -21,8 +21,10 @@ function serializeBlock(b: Block): string {
     case "paragraph":
       return serializeInline(b.children)
 
-    case "heading":
-      return `${"#".repeat(b.level)} ${serializeInline(b.children)}`
+    case "heading": {
+      const inline = serializeInline(b.children)
+      return inline ? `${"#".repeat(b.level)} ${inline}` : "#".repeat(b.level)
+    }
 
     case "code": {
       const fence = "```" + (b.language ?? "")
@@ -86,6 +88,14 @@ function serializeBlock(b: Block): string {
       return "---"
 
     case "table": {
+      if (b.view) {
+        const cellHtml = (c: Inline[]) => inlineToHtml(c)
+        const head = `<thead><tr>${b.header.map((c) => `<th>${cellHtml(c)}</th>`).join("")}</tr></thead>`
+        const body = `<tbody>${b.rows
+          .map((r) => `<tr>${r.map((c) => `<td>${cellHtml(c)}</td>`).join("")}</tr>`)
+          .join("")}</tbody>`
+        return `<table data-view="${b.view}">${head}${body}</table>`
+      }
       const row = (cells: Inline[][]) => `| ${cells.map((c) => serializeInline(c)).join(" | ")} |`
       const sep = `| ${b.header.map(() => "---").join(" | ")} |`
       return [row(b.header), sep, ...b.rows.map(row)].join("\n")
@@ -93,7 +103,38 @@ function serializeBlock(b: Block): string {
 
     case "math":
       return `$$\n${b.formula}\n$$`
+
+    case "updates":
+      return `{% updates${b.format ? ` format="${b.format}"` : ""} %}\n${b.updates
+        .map(
+          (u) =>
+            `{% update date="${u.date}" %}\n${serializeBlocks(u.children)}\n{% endupdate %}`
+        )
+        .join("\n\n")}\n{% endupdates %}`
+
+    case "openapi-operation": {
+      const attrs = [
+        b.spec ? ` spec="${b.spec}"` : "",
+        b.path ? ` path="${b.path}"` : "",
+        b.method ? ` method="${b.method}"` : "",
+      ].join("")
+      const inner = b.specUrl ? `\n[${b.label || b.spec || "OpenAPI"}](${b.specUrl})` : ""
+      return `{% openapi-operation${attrs} %}${inner}\n{% endopenapi-operation %}`
+    }
   }
+}
+
+function inlineToHtml(nodes: Inline[]): string {
+  return nodes
+    .map((n) => {
+      let s = n.text
+      if (n.code) s = `<code>${s}</code>`
+      if (n.bold) s = `<strong>${s}</strong>`
+      if (n.italic) s = `<em>${s}</em>`
+      if (n.link) s = `<a href="${n.link}">${s}</a>`
+      return s
+    })
+    .join("")
 }
 
 function serializeListItem(item: ListItemNode, ordered: boolean, task: boolean, idx: number): string {
