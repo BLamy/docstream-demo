@@ -23,6 +23,24 @@ async function gh(path: string, token: string, init?: RequestInit) {
 const b64encode = (s: string) => Buffer.from(s, "utf8").toString("base64")
 const b64decode = (s: string) => Buffer.from(s, "base64").toString("utf8")
 
+export interface Profile {
+  user: { login: string; avatar: string }
+  orgs: Array<{ login: string; avatar: string }>
+}
+
+/** The logged-in user and the orgs they belong to (for the owner switcher). */
+export async function userProfile(token: string): Promise<Profile> {
+  const user = (await gh("/user", token)) as { login: string; avatar_url: string }
+  const orgs = (await gh("/user/orgs?per_page=100", token).catch(() => [])) as Array<{
+    login: string
+    avatar_url: string
+  }>
+  return {
+    user: { login: user.login, avatar: user.avatar_url },
+    orgs: orgs.map((o) => ({ login: o.login, avatar: o.avatar_url })),
+  }
+}
+
 /** Repos the user can access, most recently pushed first. */
 export async function listUserRepos(token: string): Promise<string[]> {
   const repos: Array<{ full_name: string }> = []

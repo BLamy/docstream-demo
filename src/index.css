@@ -438,3 +438,17 @@
 .gb-code pre code .hljs-comment { font-style: italic; }
 .gb-commit-panel { display: flex; gap: 8px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--muted); }
 .gb-commit-message { max-width: 420px; background: var(--background); }
+
+/* --- Owner switcher + sidebar search --- */
+.gb-sidebar-head { position: relative; }
+.gb-owner-switch { display: flex; align-items: center; gap: 8px; width: 100%; border-radius: 8px; padding: 4px 6px; text-align: left; }
+.gb-owner-switch:hover { background: var(--accent); }
+.gb-owner-avatar { width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0; }
+.gb-owner-menu { position: absolute; top: calc(100% - 6px); left: 10px; right: 10px; z-index: 40; background: var(--popover); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.14); padding: 5px; max-height: 320px; overflow-y: auto; }
+.gb-owner-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 7px; font-size: 13.5px; text-align: left; }
+.gb-owner-item:hover { background: var(--accent); }
+.gb-owner-item-active { background: var(--accent); font-weight: 500; }
+.gb-owner-tag { margin-left: auto; font-size: 10.5px; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
+.gb-sidebar-search { display: flex; align-items: center; gap: 7px; margin: 8px 10px 0; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--muted-foreground); }
+.gb-sidebar-search input { flex: 1; background: transparent; border: none; outline: none; font-size: 13px; color: var(--foreground); }
+.gb-sidebar-search button { display: flex; color: var(--muted-foreground); }

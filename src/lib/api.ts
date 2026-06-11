@@ -1,3 +1,8 @@
+export interface Profile {
+  user: { login: string; avatar: string }
+  orgs: Array<{ login: string; avatar: string }>
+}
+
 export interface RepoTree {
   branch: string
   files: string[]
@@ -36,6 +41,7 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  githubProfile: () => http<Profile>("/github/profile"),
   githubRepos: () => http<string[]>("/github/repos"),
   repoTree: (repo: string) => http<RepoTree>(`/github/repos/${repo}/tree`),
   repoFile: (repo: string, path: string) =>

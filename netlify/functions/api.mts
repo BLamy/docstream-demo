@@ -7,6 +7,7 @@ import {
   listMarkdownTree,
   listUserRepos,
   openPullRequest,
+  userProfile,
 } from "./lib/github.ts"
 import { GithubNotConnectedError, githubTokenForUser } from "./lib/auth0-vault.ts"
 
@@ -165,6 +166,16 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
   // Token Vault now, so this just drops the user back into the app.
   if (sub === "/callback" && req.method === "GET") {
     return new Response(null, { status: 302, headers: { location: "/" } })
+  }
+
+  // GET /github/profile — the user and their orgs, for the owner switcher
+  if (sub === "/profile" && req.method === "GET") {
+    try {
+      const token = await githubToken(req)
+      return json(await userProfile(token))
+    } catch (e) {
+      return githubError(e)
+    }
   }
 
   // GET /github/repos — repos the logged-in GitHub user can access

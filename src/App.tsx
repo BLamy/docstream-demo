@@ -13,6 +13,8 @@ import {
   Loader2,
   LogOut,
   PenLine,
+  Search,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -110,6 +112,9 @@ export default function App() {
   const [repo, setRepo] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [view, setView] = useState<View>("edit")
+  const [owner, setOwner] = useState<string | null>(null)
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false)
+  const [search, setSearch] = useState("")
 
   // Repos come from the logged-in user's own GitHub identity (Auth0 Token
   // Vault exchanges the session's refresh token for their GitHub token).
@@ -119,9 +124,46 @@ export default function App() {
     staleTime: 5 * 60_000,
     retry: false,
   })
-  const repos = useMemo(() => reposQuery.data ?? [], [reposQuery.data])
+  const profile = useQuery({
+    queryKey: ["profile"],
+    queryFn: api.githubProfile,
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+  const allRepos = useMemo(() => reposQuery.data ?? [], [reposQuery.data])
   const githubNotConnected =
     reposQuery.isError && String(reposQuery.error).includes("github_not_connected")
+
+  // Owner switcher: the user plus their orgs (plus any other owners that
+  // appear among accessible repos, e.g. collaborator repos).
+  const owners = useMemo(() => {
+    const known = new Map<string, string>() // login -> avatar
+    if (profile.data) {
+      known.set(profile.data.user.login, profile.data.user.avatar)
+      for (const o of profile.data.orgs) known.set(o.login, o.avatar)
+    }
+    for (const r of allRepos) {
+      const o = r.split("/")[0]
+      if (!known.has(o)) known.set(o, `https://github.com/${o}.png?size=48`)
+    }
+    return [...known.entries()].map(([login, avatar]) => ({ login, avatar }))
+  }, [profile.data, allRepos])
+
+  // Default to the personal account once known.
+  useEffect(() => {
+    if (!owner && profile.data) setOwner(profile.data.user.login)
+  }, [owner, profile.data])
+
+  const activeOwner = owners.find((o) => o.login === owner) ?? owners[0] ?? null
+
+  const repos = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return allRepos.filter((r) => {
+      const [repoOwner, name] = r.split("/")
+      if (activeOwner && repoOwner !== activeOwner.login) return false
+      return !q || name.toLowerCase().includes(q)
+    })
+  }, [allRepos, activeOwner, search])
 
   const tree = useQuery({
     queryKey: ["tree", repo],
@@ -218,8 +260,54 @@ export default function App() {
     <div className="gb-app">
       <aside className="gb-sidebar">
         <div className="gb-sidebar-head">
-          <Book className="size-5" />
-          <span className="font-semibold">blamy-notes</span>
+          {activeOwner ? (
+            <button className="gb-owner-switch" onClick={() => setOwnerMenuOpen((o) => !o)}>
+              <img className="gb-owner-avatar" src={activeOwner.avatar} alt="" />
+              <span className="font-semibold truncate">{activeOwner.login}</span>
+              <ChevronDown className="size-4 shrink-0" />
+            </button>
+          ) : (
+            <>
+              <Book className="size-5" />
+              <span className="font-semibold">blamy-notes</span>
+            </>
+          )}
+          {ownerMenuOpen && (
+            <div className="gb-owner-menu">
+              {owners.map((o) => (
+                <button
+                  key={o.login}
+                  className={`gb-owner-item ${o.login === activeOwner?.login ? "gb-owner-item-active" : ""}`}
+                  onClick={() => {
+                    setOwner(o.login)
+                    setOwnerMenuOpen(false)
+                    setRepo(null)
+                    setFilePath(null)
+                  }}
+                >
+                  <img className="gb-owner-avatar" src={o.avatar} alt="" />
+                  <span className="truncate">{o.login}</span>
+                  {o.login === profile.data?.user.login && (
+                    <span className="gb-owner-tag">you</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="gb-sidebar-search">
+          <Search className="size-3.5" />
+          <input
+            value={search}
+            placeholder="Find repositories…"
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && (
+            <button onClick={() => setSearch("")} title="Clear">
+              <X className="size-3.5" />
+            </button>
+          )}
         </div>
 
         <div className="gb-sidebar-scroll">
@@ -239,10 +327,14 @@ export default function App() {
             </div>
           )}
           {reposQuery.data && repos.length === 0 && (
-            <div className="gb-sidebar-note">Your GitHub account has no repositories.</div>
+            <div className="gb-sidebar-note">
+              {search
+                ? `No repositories match “${search}”.`
+                : `No repositories in ${activeOwner?.login ?? "this org"}.`}
+            </div>
           )}
           {repos.map((r) => {
-            const [owner, name] = r.split("/")
+            const name = r.split("/")[1]
             const active = r === repo
             return (
               <div key={r}>
@@ -257,7 +349,6 @@ export default function App() {
                   )}
                   <GitBranch className="size-3.5 shrink-0" />
                   <span className="truncate">{name}</span>
-                  <span className="repo-owner">{owner}</span>
                 </button>
                 {active && (
                   <div className="repo-tree">
