@@ -1,4 +1,5 @@
 import type { Config, Context } from "@netlify/functions"
+import { createRemoteJWKSet, jwtVerify } from "jose"
 import {
   tasks,
   projects,
@@ -16,7 +17,35 @@ const json = (data: unknown, status = 200) =>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN || "webreplay.us.auth0.com"
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE
+// AUTH_DISABLED lets the API run open until the Auth0 .env is provisioned.
+const AUTH_DISABLED = process.env.AUTH_DISABLED === "true"
+
+const jwks = createRemoteJWKSet(
+  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+)
+
+async function authenticate(req: Request): Promise<Response | null> {
+  if (AUTH_DISABLED) return null
+  const header = req.headers.get("authorization") || ""
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null
+  if (!token) return json({ error: "missing bearer token" }, 401)
+  try {
+    await jwtVerify(token, jwks, {
+      issuer: `https://${AUTH0_DOMAIN}/`,
+      ...(AUTH0_AUDIENCE ? { audience: AUTH0_AUDIENCE } : {}),
+    })
+    return null
+  } catch {
+    return json({ error: "invalid token" }, 401)
+  }
+}
+
 export default async (req: Request, _context: Context) => {
+  const unauthorized = await authenticate(req)
+  if (unauthorized) return unauthorized
+
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api/, "") || "/"
   const method = req.method

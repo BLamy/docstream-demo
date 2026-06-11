@@ -1,10 +1,15 @@
 import type { Label, Project, Task } from "./types"
+import { getAccessToken } from "./auth-token"
 
 const BASE = "/api"
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getAccessToken()
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
     ...init,
   })
   if (!res.ok) {
