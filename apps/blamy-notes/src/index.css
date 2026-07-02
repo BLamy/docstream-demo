@@ -165,15 +165,12 @@
 .gb-section-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); padding: 8px 10px 4px; }
 .gb-sidebar-note { font-size: 13px; color: var(--muted-foreground); padding: 6px 10px; line-height: 1.5; }
 .gb-sidebar-note a { text-decoration: underline; }
-.gb-public-title { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; }
-.gb-readonly-badge { flex-shrink: 0; border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; font-size: 10.5px; font-weight: 500; color: var(--muted-foreground); background: var(--background); }
 .gb-sidebar-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 32px; border-radius: 7px; font-size: 13px; color: var(--muted-foreground); }
 .gb-sidebar-link:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
 .repo-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border-radius: 7px; font-size: 13.5px; color: var(--sidebar-foreground); text-align: left; }
 .repo-item:hover { background: var(--sidebar-accent); }
 .repo-item-active { background: var(--sidebar-accent); font-weight: 500; }
 .repo-owner { margin-left: auto; max-width: 112px; font-size: 11px; color: var(--muted-foreground); }
-.gb-public-repo { cursor: default; }
 .repo-tree { margin: 2px 0 6px; border-left: 1px solid var(--sidebar-border); margin-left: 16px; }
 .tree-dir, .tree-file { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; font-size: 13px; color: var(--muted-foreground); border-radius: 6px; text-align: left; }
 .tree-dir:hover, .tree-file:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
@@ -235,6 +232,15 @@
 .docs-topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .docs-dashboard-link { display: flex; align-items: center; gap: 4px; padding: 7px 14px; border-radius: 9px; font-size: 13.5px; font-weight: 600; background: #f5f5f5; color: #0d0d0d; }
 .docs-dashboard-link:hover { background: #d4d4d4; }
+.docs-topbar-btn { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 9px; font-size: 13px; font-weight: 500; background: rgba(255, 255, 255, 0.04); color: #e3e3e3; cursor: pointer; }
+.docs-topbar-btn:hover { background: rgba(255, 255, 255, 0.09); color: #ffffff; }
+.docs-topbar-btn:disabled { opacity: 0.5; cursor: default; }
+.docs-brand-repo { text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 14px; gap: 8px; min-width: 0; }
+.docs-ref-pill { border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 500; color: #8f8f8f; max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.docs-public-footer { max-width: 780px; margin: 44px auto 0; padding-top: 22px; border-top: 1px solid rgba(255, 255, 255, 0.08); font-size: 12.5px; color: #6f6f6f; }
+.docs-public-footer a { color: #bababa; text-decoration: underline; }
+.docs-public-empty { padding: 60px 0; color: #8f8f8f; font-size: 14px; }
+.docs-public-empty h1 { color: #efefef; font-size: 22px; margin: 0 0 8px; }
 
 .docs-subnav { display: flex; align-items: center; gap: 6px; padding: 0 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #060606; }
 .docs-subnav-item { display: flex; align-items: center; gap: 7px; padding: 11px 12px; font-size: 13.5px; color: #8f8f8f; border-bottom: 2px solid transparent; margin-bottom: -1px; }

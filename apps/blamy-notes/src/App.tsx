@@ -26,86 +26,17 @@ import { toast } from "sonner"
 
 import { GitbookEditor } from "@brett_lamy/docstream-editor"
 import { DocsRenderer, parseMarkdown, setAssetBase } from "@brett_lamy/docstream"
-import { api, type PublicRepoSource } from "@/lib/api"
+import { api } from "@/lib/api"
+import { isPublicGithubRoute, parsePublicGithubPreview } from "@/lib/public-preview"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import DocsSite from "@/docs/DocsSite"
+import PublicRepoDocs from "@/docs/PublicRepoDocs"
 
 type View = "edit" | "preview" | "markdown"
 
-interface PublicGithubPreview {
-  owner: string
-  name: string
-  repo: string
-  source: PublicRepoSource
-}
-
-function isPublicGithubRoute(pathname: string) {
-  return pathname === "/github.com" || pathname.startsWith("/github.com/")
-}
-
 function isDocsRoute(pathname: string) {
   return pathname === "/docs" || pathname.startsWith("/docs/")
-}
-
-function decodePathPart(part: string) {
-  try {
-    return decodeURIComponent(part)
-  } catch {
-    return part
-  }
-}
-
-function parsePublicGithubPreview(pathname: string): PublicGithubPreview | null {
-  const parts = pathname.split("/").filter(Boolean)
-  if (parts[0] !== "github.com" || parts.length < 3) return null
-
-  const owner = decodePathPart(parts[1])
-  const name = decodePathPart(parts[2])
-  if (!owner || !name) return null
-
-  if (parts.length === 3) {
-    return { owner, name, repo: `${owner}/${name}`, source: { type: "default" } }
-  }
-
-  if (parts[3] === "pull" && parts.length === 5) {
-    const number = Number(decodePathPart(parts[4]))
-    if (!Number.isInteger(number) || number < 1) return null
-    return { owner, name, repo: `${owner}/${name}`, source: { type: "pull", number } }
-  }
-
-  if (parts[3] === "tree" && parts.length > 4) {
-    const branch = parts.slice(4).map(decodePathPart).join("/")
-    if (!branch) return null
-    return { owner, name, repo: `${owner}/${name}`, source: { type: "branch", branch } }
-  }
-
-  return null
-}
-
-function preferredMarkdownFile(files: string[]) {
-  const byLower = new Map(files.map((path) => [path.toLowerCase(), path]))
-  for (const candidate of ["readme.md", "docs/readme.md", "summary.md"]) {
-    const match = byLower.get(candidate)
-    if (match) return match
-  }
-  return files.find((path) => !path.includes("/")) ?? files[0] ?? null
-}
-
-function publicSourceLabel(preview: PublicGithubPreview) {
-  if (preview.source.type === "pull") return `PR #${preview.source.number}`
-  if (preview.source.type === "branch") return preview.source.branch
-  return "default branch"
-}
-
-function githubUrlForPreview(preview: PublicGithubPreview) {
-  const base = `https://github.com/${preview.repo}`
-  if (preview.source.type === "pull") return `${base}/pull/${preview.source.number}`
-  if (preview.source.type === "branch") {
-    const branchPath = preview.source.branch.split("/").map(encodeURIComponent).join("/")
-    return `${base}/tree/${branchPath}`
-  }
-  return base
 }
 
 // ---------- File tree ----------
@@ -188,61 +119,67 @@ function FileTree({
 // ---------- App ----------
 
 export default function App() {
-  if (isDocsRoute(window.location.pathname)) {
+  const { pathname } = window.location
+  if (isDocsRoute(pathname)) {
     return <DocsSite />
+  }
+  // Published repo docs sites live on /github.com/:owner/:repo — a public,
+  // read-only documentation shell entirely separate from the editor.
+  if (isPublicGithubRoute(pathname)) {
+    const preview = parsePublicGithubPreview(pathname)
+    if (!preview) {
+      return (
+        <div className="gb-route-error">
+          <Book className="size-6" />
+          <div>
+            <h1>Invalid GitHub preview URL</h1>
+            <p>Use /github.com/:owner/:repo, /pull/:number, or /tree/:branch.</p>
+          </div>
+        </div>
+      )
+    }
+    return <PublicRepoDocs preview={preview} />
   }
   return <NotesApp />
 }
 
 function NotesApp() {
-  const publicRouteRequested = isPublicGithubRoute(window.location.pathname)
-  const publicPreview = useMemo(
-    () => parsePublicGithubPreview(window.location.pathname),
-    []
-  )
   const queryClient = useQueryClient()
-  const [repo, setRepo] = useState<string | null>(() => publicPreview?.repo ?? null)
+  const [repo, setRepo] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
-  const [view, setView] = useState<View>(() => (publicPreview ? "preview" : "edit"))
+  const [view, setView] = useState<View>("edit")
   const [owner, setOwner] = useState<string | null>(null)
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false)
   const [search, setSearch] = useState("")
-  const shouldLoadUserRepos = !publicRouteRequested
 
   // Repos come from the logged-in user's own GitHub identity (Auth0 Token
   // Vault exchanges the session's refresh token for their GitHub token).
   const reposQuery = useQuery({
     queryKey: ["repos"],
     queryFn: api.githubRepos,
-    enabled: shouldLoadUserRepos,
     staleTime: 5 * 60_000,
     retry: false,
   })
   const profile = useQuery({
     queryKey: ["profile"],
     queryFn: api.githubProfile,
-    enabled: shouldLoadUserRepos,
     staleTime: 10 * 60_000,
     retry: false,
   })
   const allRepos = useMemo(() => reposQuery.data ?? [], [reposQuery.data])
   const githubNotConnected =
-    shouldLoadUserRepos &&
-    reposQuery.isError &&
-    String(reposQuery.error).includes("github_not_connected")
+    reposQuery.isError && String(reposQuery.error).includes("github_not_connected")
 
   // Plan + published repos (the SaaS surface).
   const billing = useQuery({
     queryKey: ["billing"],
     queryFn: api.billing,
-    enabled: shouldLoadUserRepos,
     staleTime: 60_000,
     retry: false,
   })
   const shares = useQuery({
     queryKey: ["shares"],
     queryFn: api.shares,
-    enabled: shouldLoadUserRepos,
     staleTime: 60_000,
     retry: false,
   })
@@ -300,8 +237,8 @@ function NotesApp() {
 
   // Default to the personal account once known.
   useEffect(() => {
-    if (shouldLoadUserRepos && !owner && profile.data) setOwner(profile.data.user.login)
-  }, [owner, profile.data, shouldLoadUserRepos])
+    if (!owner && profile.data) setOwner(profile.data.user.login)
+  }, [owner, profile.data])
 
   const activeOwner = owners.find((o) => o.login === owner) ?? owners[0] ?? null
 
@@ -362,21 +299,15 @@ function NotesApp() {
   }
 
   const tree = useQuery({
-    queryKey: ["tree", repo, publicPreview?.source],
-    queryFn: () =>
-      publicPreview
-        ? api.publicRepoTree(repo!, publicPreview.source)
-        : api.repoTree(repo!),
+    queryKey: ["tree", repo],
+    queryFn: () => api.repoTree(repo!),
     enabled: !!repo,
     staleTime: 60_000,
   })
 
   const file = useQuery({
-    queryKey: ["file", repo, filePath, publicPreview?.source],
-    queryFn: () =>
-      publicPreview
-        ? api.publicRepoFile(repo!, filePath!, publicPreview.source)
-        : api.repoFile(repo!, filePath!),
+    queryKey: ["file", repo, filePath],
+    queryFn: () => api.repoFile(repo!, filePath!),
     enabled: !!repo && !!filePath,
   })
 
@@ -392,12 +323,6 @@ function NotesApp() {
     }
   }, [file.data])
 
-  useEffect(() => {
-    if (!publicPreview || filePath || !tree.data) return
-    const nextPath = preferredMarkdownFile(tree.data.files)
-    if (nextPath) setFilePath(nextPath)
-  }, [filePath, publicPreview, tree.data])
-
   // Relative image srcs in the file resolve against the repo's raw URL.
   useEffect(() => {
     setAssetBase(
@@ -408,13 +333,11 @@ function NotesApp() {
   }, [repo, tree.data?.assetRepo, tree.data?.branch, tree.data?.ref, filePath])
 
   const handleChange = useCallback((md: string) => {
-    if (publicPreview) return
     setMarkdown(md)
     setDirty(true)
-  }, [publicPreview])
+  }, [])
 
   const selectRepo = (r: string) => {
-    if (publicPreview) return
     if (dirty && !window.confirm("Discard unsaved changes?")) return
     setRepo(r === repo ? null : r)
     setFilePath(null)
@@ -431,13 +354,12 @@ function NotesApp() {
   const [commitMessage, setCommitMessage] = useState("")
 
   const openSyncPanel = (mode: "main" | "pr") => {
-    if (publicPreview) return
     setCommitMessage(`docs: update ${filePath}`)
     setPendingMode(mode)
   }
 
   const sync = async (mode: "main" | "pr", message: string) => {
-    if (publicPreview || !repo || !filePath || !file.data || !message) return
+    if (!repo || !filePath || !file.data || !message) return
     setPendingMode(null)
     setSyncing(mode)
     try {
@@ -471,40 +393,17 @@ function NotesApp() {
     window.location.reload()
   }
 
-  const viewTabs = publicPreview
-    ? ([
-        ["preview", Eye, "Preview"],
-        ["markdown", FileText, "Markdown"],
-      ] as const)
-    : ([
-        ["edit", PenLine, "Editor"],
-        ["preview", Eye, "Preview"],
-        ["markdown", FileText, "Markdown"],
-      ] as const)
-
-  if (publicRouteRequested && !publicPreview) {
-    return (
-      <div className="gb-route-error">
-        <Book className="size-6" />
-        <div>
-          <h1>Invalid GitHub preview URL</h1>
-          <p>Use /github.com/:owner/:repo, /pull/:number, or /tree/:branch.</p>
-        </div>
-      </div>
-    )
-  }
+  const viewTabs = [
+    ["edit", PenLine, "Editor"],
+    ["preview", Eye, "Preview"],
+    ["markdown", FileText, "Markdown"],
+  ] as const
 
   return (
     <div className="gb-app">
       <aside className="gb-sidebar">
         <div className="gb-sidebar-head">
-          {publicPreview ? (
-            <div className="gb-public-title">
-              <Book className="size-5 shrink-0" />
-              <span className="font-semibold truncate">{publicPreview.repo}</span>
-              <span className="gb-readonly-badge">read-only</span>
-            </div>
-          ) : activeOwner ? (
+          {activeOwner ? (
             <button className="gb-owner-switch" onClick={() => setOwnerMenuOpen((o) => !o)}>
               <img className="gb-owner-avatar" src={activeOwner.avatar} alt="" />
               <span className="font-semibold truncate">{activeOwner.login}</span>
@@ -540,79 +439,44 @@ function NotesApp() {
           )}
         </div>
 
-        {!publicPreview && (
-          <div className="gb-sidebar-search">
-            <Search className="size-3.5" />
-            <input
-              value={search}
-              placeholder="Find repositories…"
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button onClick={() => setSearch("")} title="Clear">
-                <X className="size-3.5" />
-              </button>
-            )}
-          </div>
-        )}
+        <div className="gb-sidebar-search">
+          <Search className="size-3.5" />
+          <input
+            value={search}
+            placeholder="Find repositories…"
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && (
+            <button onClick={() => setSearch("")} title="Clear">
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
 
         <div className="gb-sidebar-scroll">
-          <div className="gb-section-label">
-            {publicPreview ? "Markdown files" : "Repositories"}
-          </div>
-          {!publicPreview && reposQuery.isLoading && (
+          <div className="gb-section-label">Repositories</div>
+          {reposQuery.isLoading && (
             <div className="gb-sidebar-note">Loading repositories…</div>
           )}
-          {!publicPreview && githubNotConnected && (
+          {githubNotConnected && (
             <div className="gb-sidebar-note">
               This login isn't connected to GitHub. Log out and sign in with{" "}
               <strong>Continue with GitHub</strong> to see your repositories.
             </div>
           )}
-          {!publicPreview && reposQuery.isError && !githubNotConnected && (
+          {reposQuery.isError && !githubNotConnected && (
             <div className="gb-sidebar-note">
               Failed to load repositories: {String(reposQuery.error)}
             </div>
           )}
-          {!publicPreview && reposQuery.data && repos.length === 0 && (
+          {reposQuery.data && repos.length === 0 && (
             <div className="gb-sidebar-note">
               {search
                 ? `No repositories match “${search}”.`
                 : `No repositories in ${activeOwner?.login ?? "this org"}.`}
             </div>
           )}
-          {publicPreview ? (
-            <div>
-              <div className="repo-item repo-item-active gb-public-repo">
-                {publicPreview.source.type === "pull" ? (
-                  <GitPullRequest className="size-3.5 shrink-0" />
-                ) : (
-                  <GitBranch className="size-3.5 shrink-0" />
-                )}
-                <span className="truncate">{publicPreview.name}</span>
-                <span className="repo-owner truncate">
-                  {tree.data?.branch ?? publicSourceLabel(publicPreview)}
-                </span>
-              </div>
-              <div className="repo-tree">
-                {tree.isLoading && <div className="gb-sidebar-note">Loading files…</div>}
-                {tree.isError && (
-                  <div className="gb-sidebar-note">Failed to load files: {String(tree.error)}</div>
-                )}
-                {tree.data && tree.data.files.length === 0 && (
-                  <div className="gb-sidebar-note">No markdown files</div>
-                )}
-                {tree.data && (
-                  <FileTree
-                    node={buildTree(tree.data.files)}
-                    depth={0}
-                    selected={filePath}
-                    onSelect={selectFile}
-                  />
-                )}
-              </div>
-            </div>
-          ) : repos.map((r) => {
+          {repos.map((r) => {
             const [repoOwner, name] = r.full_name.split("/")
             const active = r.full_name === repo
             const foreign = searching && repoOwner !== activeOwner?.login
@@ -663,17 +527,6 @@ function NotesApp() {
         </div>
 
         <div className="gb-sidebar-foot">
-          {publicPreview ? (
-            <a
-              className="gb-sidebar-link"
-              href={tree.data?.htmlUrl ?? githubUrlForPreview(publicPreview)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <ExternalLink className="size-4" /> View on GitHub
-            </a>
-          ) : (
-            <>
               <div className="gb-plan-row">
                 <span
                   className={`gb-plan-badge ${plan === "pro" ? "gb-plan-badge-pro" : ""}`}
@@ -704,8 +557,6 @@ function NotesApp() {
               <Button variant="ghost" size="sm" onClick={logout}>
                 <LogOut className="size-4" /> Log out
               </Button>
-            </>
-          )}
         </div>
       </aside>
 
@@ -720,11 +571,6 @@ function NotesApp() {
               <span className="text-muted-foreground">No file selected</span>
             )}
           </span>
-          {publicPreview && (
-            <span className="gb-ref-pill">
-              {tree.data?.branch ?? publicSourceLabel(publicPreview)}
-            </span>
-          )}
           <div className="gb-view-tabs">
             {viewTabs.map(([v, Icon, label]) => (
               <button
@@ -736,7 +582,7 @@ function NotesApp() {
               </button>
             ))}
           </div>
-          {!publicPreview && repo && (
+          {repo && (
             <Button
               size="sm"
               variant={activeShare ? "outline" : "ghost"}
@@ -747,7 +593,7 @@ function NotesApp() {
               {activeShare ? "Public" : "Publish"}
             </Button>
           )}
-          {!publicPreview && filePath && (
+          {filePath && (
             <div className="gb-sync">
               <span className={`gb-sync-state ${dirty ? "gb-sync-dirty" : ""}`}>
                 {dirty ? (
@@ -783,7 +629,7 @@ function NotesApp() {
           )}
         </header>
 
-        {!publicPreview && sharePanelOpen && repo && (
+        {sharePanelOpen && repo && (
           <div className="gb-share-panel" data-testid="share-panel">
             {activeShare ? (
               <>
@@ -858,7 +704,7 @@ function NotesApp() {
           </div>
         )}
 
-        {!publicPreview && pendingMode && (
+        {pendingMode && (
           <div className="gb-commit-panel">
             <Input
               autoFocus
@@ -883,17 +729,13 @@ function NotesApp() {
         <div className="gb-content">
           {!repo ? (
             <div className="gb-empty">Select a repository to browse its markdown files.</div>
-          ) : publicPreview && tree.isLoading && !filePath ? (
-            <div className="gb-empty">Loading markdown files…</div>
-          ) : publicPreview && tree.isError && !filePath ? (
-            <div className="gb-empty">Failed to load repository: {String(tree.error)}</div>
           ) : !filePath ? (
             <div className="gb-empty">Select a markdown file from the tree.</div>
           ) : file.isLoading ? (
             <div className="gb-empty">Loading {filePath}…</div>
           ) : file.isError ? (
             <div className="gb-empty">Failed to load file: {String(file.error)}</div>
-          ) : !publicPreview && view === "edit" ? (
+          ) : view === "edit" ? (
             <GitbookEditor
               key={`${repo}:${filePath}`}
               markdown={markdown}
@@ -906,7 +748,6 @@ function NotesApp() {
               className="gb-raw"
               value={markdown}
               onChange={(e) => handleChange(e.target.value)}
-              readOnly={!!publicPreview}
               spellCheck={false}
             />
           )}
