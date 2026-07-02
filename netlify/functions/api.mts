@@ -5,6 +5,7 @@ import {
   commitFile,
   getFile,
   getFileFromSource,
+  getRepoInfo,
   GitHubRestError,
   listMarkdownTree,
   listUserRepos,
@@ -21,9 +22,18 @@ const json = (data: unknown, status = 200) =>
   })
 
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN || "webreplay.us.auth0.com"
+// AUTH0_BASE_URL overrides the tenant URL, e.g. to point at a local Auth0
+// emulator (http://127.0.0.1:4301). Defaults to the real tenant over https.
+const AUTH0_BASE = process.env.AUTH0_BASE_URL || `https://${AUTH0_DOMAIN}`
 const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE
 const AUTH0_CLIENT_ID = process.env.AUTH0_CLIENT_ID
 const AUTH0_CLIENT_SECRET = process.env.AUTH0_CLIENT_SECRET
+const AUTH0_REALM = process.env.AUTH0_REALM || "Username-Password-Authentication"
+// Namespaced JWT claim carrying the user's GitHub token directly (the Auth0
+// emulator maps app_metadata.github_token here). When present it replaces
+// the Token Vault exchange.
+const GITHUB_TOKEN_CLAIM =
+  process.env.AUTH0_GITHUB_TOKEN_CLAIM || "https://blamy-notes.local/github_token"
 const COOKIE = "auth_token"
 const REFRESH_COOKIE = "auth_refresh"
 // AUTH_BYPASS_JWT: when set, auth is bypassed — every request is treated as
@@ -33,9 +43,7 @@ const AUTH_BYPASS_JWT = process.env.AUTH_BYPASS_JWT
 // Token Vault exchange when no session refresh cookie is present.
 const AUTH_BYPASS_REFRESH_TOKEN = process.env.AUTH_BYPASS_REFRESH_TOKEN
 
-const jwks = createRemoteJWKSet(
-  new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
-)
+const jwks = createRemoteJWKSet(new URL(`${AUTH0_BASE}/.well-known/jwks.json`))
 
 function cookieValue(req: Request, name: string): string | null {
   const cookies = req.headers.get("cookie") || ""
@@ -51,13 +59,32 @@ function bearerOrCookieToken(req: Request): string | null {
 
 async function verifyToken(token: string) {
   return jwtVerify(token, jwks, {
-    issuer: `https://${AUTH0_DOMAIN}/`,
+    issuer: `${AUTH0_BASE}/`,
     ...(AUTH0_AUDIENCE ? { audience: AUTH0_AUDIENCE } : {}),
   })
 }
 
 const setCookie = (name: string, value: string, maxAge: number) =>
   `${name}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`
+
+interface TokenGrant {
+  access_token: string
+  refresh_token?: string
+  expires_in?: number
+}
+
+/** Turns an Auth0 token grant into the two HttpOnly session cookies. */
+function sessionResponse(grant: TokenGrant): Response {
+  const headers = new Headers({ "content-type": "application/json" })
+  headers.append("set-cookie", setCookie(COOKIE, grant.access_token, grant.expires_in ?? 86400))
+  if (grant.refresh_token) {
+    headers.append("set-cookie", setCookie(REFRESH_COOKIE, grant.refresh_token, 30 * 86400))
+  }
+  return new Response(JSON.stringify({ ok: true, offline: !!grant.refresh_token }), {
+    status: 200,
+    headers,
+  })
+}
 
 // Auth0 Regular Web App flow: the SPA lands back on the site root with
 // ?code=... and forwards it here; the secret-bearing exchange stays
@@ -78,7 +105,7 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
     if (!code || !redirect_uri) {
       return json({ error: "code and redirect_uri required" }, 400)
     }
-    const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+    const res = await fetch(`${AUTH0_BASE}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -92,20 +119,48 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
     if (!res.ok) {
       return json({ error: "token exchange failed", detail: await res.text() }, 401)
     }
-    const { access_token, refresh_token, expires_in } = (await res.json()) as {
-      access_token: string
-      refresh_token?: string
-      expires_in: number
+    return sessionResponse((await res.json()) as TokenGrant)
+  }
+
+  // Resource Owner Password (Auth0 password-realm) login. The primary flow
+  // stays the hosted redirect; this powers environments without a browser
+  // redirect target — the Auth0 emulator and tenants with ROPG enabled.
+  if (sub === "/login" && req.method === "POST") {
+    if (!AUTH0_CLIENT_ID || !AUTH0_CLIENT_SECRET) {
+      return json({ error: "auth not configured" }, 500)
     }
-    const headers = new Headers({ "content-type": "application/json" })
-    headers.append("set-cookie", setCookie(COOKIE, access_token, expires_in ?? 86400))
-    if (refresh_token) {
-      headers.append("set-cookie", setCookie(REFRESH_COOKIE, refresh_token, 30 * 86400))
+    const { username, password } = (await req.json()) as {
+      username?: string
+      password?: string
     }
-    return new Response(JSON.stringify({ ok: true, offline: !!refresh_token }), {
-      status: 200,
-      headers,
+    if (!username || !password) {
+      return json({ error: "username and password required" }, 400)
+    }
+    const res = await fetch(`${AUTH0_BASE}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "http://auth0.com/oauth/grant-type/password-realm",
+        client_id: AUTH0_CLIENT_ID,
+        client_secret: AUTH0_CLIENT_SECRET,
+        username,
+        password,
+        realm: AUTH0_REALM,
+        scope: "openid profile email offline_access",
+        ...(AUTH0_AUDIENCE ? { audience: AUTH0_AUDIENCE } : {}),
+      }),
     })
+    if (!res.ok) {
+      let detail = "login failed"
+      try {
+        const body = (await res.json()) as { error_description?: string }
+        if (body.error_description) detail = body.error_description
+      } catch {
+        /* non-json error body */
+      }
+      return json({ error: detail }, 401)
+    }
+    return sessionResponse((await res.json()) as TokenGrant)
   }
 
   if (sub === "/me" && req.method === "GET") {
@@ -169,7 +224,7 @@ async function ensureSession(req: Request): Promise<Session> {
 
   const refresh = cookieValue(req, REFRESH_COOKIE)
   if (refresh && AUTH0_CLIENT_ID && AUTH0_CLIENT_SECRET) {
-    const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+    const res = await fetch(`${AUTH0_BASE}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -202,8 +257,27 @@ async function ensureSession(req: Request): Promise<Session> {
   return { failed: json({ error: "missing bearer token" }, 401), cookies: [] }
 }
 
+/**
+ * GitHub token carried directly on the session JWT as a namespaced claim.
+ * The Auth0 emulator injects it from user app_metadata; real tenants leave
+ * it unset and fall through to Token Vault.
+ */
+function githubTokenFromClaim(req: Request): string | null {
+  const token = bearerOrCookieToken(req)
+  if (!token) return null
+  try {
+    const claim = decodeJwt(token)[GITHUB_TOKEN_CLAIM]
+    return typeof claim === "string" && claim ? claim : null
+  } catch {
+    return null
+  }
+}
+
 /** GitHub access token for the logged-in user, via Auth0 Token Vault. */
 async function githubToken(req: Request): Promise<string> {
+  const fromClaim = githubTokenFromClaim(req)
+  if (fromClaim) return fromClaim
+
   const refresh =
     AUTH_BYPASS_REFRESH_TOKEN ??
     refreshedTokens.get(req) ??
@@ -216,6 +290,16 @@ async function githubToken(req: Request): Promise<string> {
   return githubTokenForUser(refresh)
 }
 
+/** Resolves the stored credential of a published repo for anonymous reads. */
+async function shareGithubToken(share: {
+  githubToken: string | null
+  vaultRefreshToken: string | null
+}): Promise<string | null> {
+  if (share.githubToken) return share.githubToken
+  if (share.vaultRefreshToken) return githubTokenForUser(share.vaultRefreshToken)
+  return null
+}
+
 function githubError(e: unknown): Response {
   if (e instanceof GithubNotConnectedError) {
     return json({ error: "github_not_connected", detail: e.detail }, 428)
@@ -224,6 +308,147 @@ function githubError(e: unknown): Response {
     return json({ error: e.message }, e.status)
   }
   return json({ error: String(e) }, 502)
+}
+
+// ---------- Billing (Stripe) ----------
+
+// Upgrades are one-time Checkout purchases of the Pro plan. Fulfillment is
+// double-covered: the Stripe webhook flips the plan server-to-server, and
+// /billing/confirm verifies the session when the browser lands back on the
+// success URL (covers environments where the webhook can't reach us).
+async function handleBilling(req: Request, path: string, sub: string): Promise<Response> {
+  const action = path.replace(/^\/billing/, "") || "/"
+  const { ensureAccountWorkspace, setAccountPlan } = await import("./lib/workspaces.ts")
+  const stripe = await import("./lib/stripe.ts")
+  const { account } = await ensureAccountWorkspace(sub)
+
+  if (action === "/" && req.method === "GET") {
+    let proPrice: { unitAmount: number; currency: string } | null = null
+    try {
+      proPrice = await stripe.getProPrice()
+    } catch {
+      /* Stripe unconfigured/unreachable — the UI hides the price. */
+    }
+    return json({ plan: account.plan, proPrice })
+  }
+
+  if (action === "/checkout" && req.method === "POST") {
+    if (account.plan === "pro") return json({ error: "already on pro" }, 409)
+    const origin = new URL(req.url).origin
+    try {
+      const session = await stripe.createCheckoutSession({
+        priceId: stripe.PRO_PRICE_ID,
+        successUrl: `${origin}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${origin}/?billing=cancelled`,
+        metadata: { account_id: account.id, auth0_sub: sub },
+      })
+      if (!session.url) return json({ error: "checkout session has no url" }, 502)
+      return json({ url: session.url })
+    } catch (e) {
+      return json({ error: String(e instanceof Error ? e.message : e) }, 502)
+    }
+  }
+
+  if (action === "/confirm" && req.method === "POST") {
+    const { session_id } = (await req.json()) as { session_id?: string }
+    if (!session_id) return json({ error: "session_id required" }, 400)
+    try {
+      const session = await stripe.getCheckoutSession(session_id)
+      if (session.metadata?.account_id !== account.id) {
+        return json({ error: "session does not belong to this account" }, 403)
+      }
+      if (session.payment_status !== "paid") {
+        return json({ plan: account.plan, paymentStatus: session.payment_status })
+      }
+      await setAccountPlan(account.id, "pro")
+      return json({ plan: "pro", paymentStatus: session.payment_status })
+    } catch (e) {
+      return json({ error: String(e instanceof Error ? e.message : e) }, 502)
+    }
+  }
+
+  return json({ error: "not found", path }, 404)
+}
+
+/** Stripe webhook: signature-verified, no session. */
+async function handleBillingWebhook(req: Request): Promise<Response> {
+  const { verifyWebhookSignature, WEBHOOK_SECRET } = await import("./lib/stripe.ts")
+  const body = await req.text()
+  if (!verifyWebhookSignature(body, req.headers, WEBHOOK_SECRET)) {
+    return json({ error: "invalid signature" }, 400)
+  }
+  const event = JSON.parse(body) as {
+    type: string
+    data?: { object?: { payment_status?: string; metadata?: Record<string, string> } }
+  }
+  if (event.type === "checkout.session.completed") {
+    const session = event.data?.object
+    const accountId = session?.metadata?.account_id
+    if (accountId && session?.payment_status === "paid") {
+      const { setAccountPlan } = await import("./lib/workspaces.ts")
+      await setAccountPlan(accountId, "pro")
+      console.log(`billing webhook: account ${accountId} upgraded to pro`)
+    }
+  }
+  return json({ received: true })
+}
+
+// ---------- Public doc shares ----------
+
+// Publishing a repo puts its rendered markdown at /github.com/:owner/:repo
+// for anonymous visitors. For private repos that means the server must keep
+// a credential to read on the owner's behalf (Pro plan feature).
+async function handleShares(req: Request, path: string, sub: string): Promise<Response> {
+  const action = path.replace(/^\/shares/, "") || "/"
+  const workspaces = await import("./lib/workspaces.ts")
+  const { account } = await workspaces.ensureAccountWorkspace(sub)
+
+  if (action === "/" && req.method === "GET") {
+    return json({ shares: await workspaces.listRepoShares(account.id) })
+  }
+
+  if (action === "/" && req.method === "POST") {
+    const { repo } = (await req.json()) as { repo?: string }
+    if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+      return json({ error: "repo must be owner/name" }, 400)
+    }
+    // The publisher must actually have access to the repo; the same call
+    // tells us whether it is private, which is the Pro-gated case (the server
+    // must retain a credential to serve private content publicly).
+    let repoInfo: Awaited<ReturnType<typeof getRepoInfo>>
+    try {
+      repoInfo = await getRepoInfo(await githubToken(req), repo)
+    } catch (e) {
+      return githubError(e)
+    }
+    if (repoInfo.private && account.plan !== "pro") {
+      return json(
+        {
+          error: "pro_plan_required",
+          detail: "Publishing private repos as public docs requires the Pro plan.",
+        },
+        402
+      )
+    }
+    const fromClaim = githubTokenFromClaim(req)
+    const refresh = refreshedTokens.get(req) ?? cookieValue(req, REFRESH_COOKIE)
+    const share = await workspaces.createRepoShare({
+      accountId: account.id,
+      repo,
+      githubToken: fromClaim,
+      vaultRefreshToken: fromClaim ? null : refresh,
+    })
+    return json({ share })
+  }
+
+  const deleteMatch = action.match(/^\/([^/]+)$/)
+  if (deleteMatch && req.method === "DELETE") {
+    const removed = await workspaces.deleteRepoShare(account.id, deleteMatch[1])
+    if (!removed) return json({ error: "share not found" }, 404)
+    return json({ ok: true })
+  }
+
+  return json({ error: "not found", path }, 404)
 }
 
 function publicRepoSource(url: URL): RepoSource {
@@ -257,8 +482,10 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
   }
 
   // GET /github/public/repos/:owner/:repo/(tree|file)
-  // Public readonly preview endpoints intentionally skip Auth0. GitHub still
-  // enforces repository visibility and unauthenticated API rate limits.
+  // Public readonly preview endpoints intentionally skip Auth0. Repos the
+  // owner published (repo_shares) are read with the stored credential, so
+  // private repos work; everything else falls back to unauthenticated GitHub,
+  // which still enforces repository visibility and rate limits.
   const publicRepoMatch = sub.match(/^\/public\/repos\/([^/]+)\/([^/]+)\/(tree|file)$/)
   if (publicRepoMatch) {
     const fullName = `${decodeURIComponent(publicRepoMatch[1])}/${decodeURIComponent(publicRepoMatch[2])}`
@@ -271,13 +498,16 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
       return json({ error: String(e instanceof Error ? e.message : e) }, 400)
     }
     try {
+      const { findRepoShare } = await import("./lib/workspaces.ts")
+      const share = await findRepoShare(fullName)
+      const token = share ? await shareGithubToken(share) : null
       if (action === "tree" && req.method === "GET") {
-        return json(await listMarkdownTree(null, fullName, source))
+        return json(await listMarkdownTree(token, fullName, source))
       }
       if (action === "file" && req.method === "GET") {
         const filePath = url.searchParams.get("path")
         if (!filePath) return json({ error: "path required" }, 400)
-        return json(await getFileFromSource(null, fullName, filePath, source))
+        return json(await getFileFromSource(token, fullName, filePath, source))
       }
     } catch (e) {
       return githubError(e)
@@ -351,12 +581,15 @@ export default async (req: Request, _context: Context) => {
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api/, "") || "/"
 
-  // Auth endpoints, public GitHub preview, the GitHub webhook, and the install callback handle
-  // their own authentication.
+  // Auth endpoints, public GitHub preview, webhooks, and the install callback
+  // handle their own authentication.
   if (path.startsWith("/auth")) return handleAuth(req, path)
   if (path.startsWith("/github/public")) return handleGithub(req, path)
   if (path === "/github/webhook" || path === "/github/callback") {
     return handleGithub(req, path)
+  }
+  if (path === "/billing/webhook" && req.method === "POST") {
+    return handleBillingWebhook(req)
   }
 
   const session = await ensureSession(req)
@@ -364,7 +597,11 @@ export default async (req: Request, _context: Context) => {
 
   const res = path.startsWith("/github")
     ? await handleGithub(req, path)
-    : json({ error: "not found", path }, 404)
+    : path.startsWith("/billing")
+      ? await handleBilling(req, path, session.sub!)
+      : path.startsWith("/shares")
+        ? await handleShares(req, path, session.sub!)
+        : json({ error: "not found", path }, 404)
 
   // Propagate any silently-refreshed session cookies.
   for (const c of session.cookies) res.headers.append("set-cookie", c)

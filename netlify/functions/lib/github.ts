@@ -29,7 +29,6 @@ async function gh(path: string, token?: string | null, init?: RequestInit) {
   return res.status === 204 ? null : res.json()
 }
 
-const b64encode = (s: string) => Buffer.from(s, "utf8").toString("base64")
 const b64decode = (s: string) => Buffer.from(s, "base64").toString("utf8")
 const encodeGitHubPath = (path: string) =>
   path.split("/").map(encodeURIComponent).join("/")
@@ -66,18 +65,32 @@ export async function userProfile(token: string): Promise<Profile> {
   }
 }
 
+export interface RepoInfo {
+  full_name: string
+  private: boolean
+}
+
+/** One repo's visibility; also serves as an access check (404 without access). */
+export async function getRepoInfo(token: string, fullName: string): Promise<RepoInfo> {
+  const repo = (await gh(`/repos/${fullName}`, token)) as {
+    full_name: string
+    private?: boolean
+  }
+  return { full_name: repo.full_name, private: repo.private ?? false }
+}
+
 /** Repos the user can access, most recently pushed first. */
-export async function listUserRepos(token: string): Promise<string[]> {
-  const repos: Array<{ full_name: string }> = []
+export async function listUserRepos(token: string): Promise<RepoInfo[]> {
+  const repos: Array<{ full_name: string; private?: boolean }> = []
   for (let page = 1; page <= 5; page++) {
     const res = (await gh(
       `/user/repos?sort=pushed&per_page=100&page=${page}`,
       token
-    )) as Array<{ full_name: string }>
+    )) as Array<{ full_name: string; private?: boolean }>
     repos.push(...res)
     if (res.length < 100) break
   }
-  return repos.map((r) => r.full_name)
+  return repos.map((r) => ({ full_name: r.full_name, private: r.private ?? false }))
 }
 
 async function resolveBranch(
@@ -209,18 +222,15 @@ export async function listMarkdownTree(
   }
 }
 
+// File reads and writes go through the Git Data API (trees/blobs/commits/refs)
+// rather than the higher-level Contents API — identical results on real
+// GitHub, and it is the surface the local GitHub emulator implements.
 export async function getFile(
   token: string | null,
   fullName: string,
-  path: string,
-  ref?: string
+  path: string
 ): Promise<{ content: string; sha: string }> {
-  const query = ref ? `?ref=${encodeURIComponent(ref)}` : ""
-  const file = (await gh(
-    `/repos/${fullName}/contents/${encodeGitHubPath(path)}${query}`,
-    token
-  )) as { content: string; sha: string }
-  return { content: b64decode(file.content.replace(/\n/g, "")), sha: file.sha }
+  return getFileFromSource(token, fullName, path)
 }
 
 export async function getFileFromSource(
@@ -252,6 +262,41 @@ export async function getFileFromSource(
   return { content, sha: blob.sha }
 }
 
+/** blob → tree → commit → ref update; one file changed on `branch`. */
+async function commitToBranch(
+  token: string,
+  fullName: string,
+  branch: string,
+  path: string,
+  content: string,
+  message: string
+): Promise<{ sha: string; htmlUrl: string }> {
+  const head = (await gh(
+    `/repos/${fullName}/git/ref/heads/${encodeGitHubPath(branch)}`,
+    token
+  )) as { object: { sha: string } }
+  const baseTree = await resolveCommitTreeSha(token, fullName, head.object.sha)
+  const tree = (await gh(`/repos/${fullName}/git/trees`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      base_tree: baseTree,
+      tree: [{ path, mode: "100644", type: "blob", content }],
+    }),
+  })) as { sha: string }
+  const commit = (await gh(`/repos/${fullName}/git/commits`, token, {
+    method: "POST",
+    body: JSON.stringify({ message, tree: tree.sha, parents: [head.object.sha] }),
+  })) as { sha: string; html_url?: string }
+  await gh(`/repos/${fullName}/git/refs/heads/${encodeGitHubPath(branch)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: commit.sha }),
+  })
+  return {
+    sha: commit.sha,
+    htmlUrl: commit.html_url ?? `https://github.com/${fullName}/commit/${commit.sha}`,
+  }
+}
+
 /** Commits one file directly to the default branch. */
 export async function commitFile(
   token: string,
@@ -259,17 +304,11 @@ export async function commitFile(
   path: string,
   content: string,
   message: string,
-  sha?: string
+  _sha?: string
 ): Promise<{ commitUrl: string }> {
-  const res = (await gh(`/repos/${fullName}/contents/${encodeGitHubPath(path)}`, token, {
-    method: "PUT",
-    body: JSON.stringify({
-      message,
-      content: b64encode(content),
-      ...(sha ? { sha } : {}),
-    }),
-  })) as { commit: { html_url: string } }
-  return { commitUrl: res.commit.html_url }
+  const repo = (await gh(`/repos/${fullName}`, token)) as { default_branch: string }
+  const commit = await commitToBranch(token, fullName, repo.default_branch, path, content, message)
+  return { commitUrl: commit.htmlUrl }
 }
 
 /** Commits one file to a new branch and opens a pull request. */
@@ -279,7 +318,7 @@ export async function openPullRequest(
   path: string,
   content: string,
   message: string,
-  sha?: string
+  _sha?: string
 ): Promise<{ prUrl: string; number: number }> {
   const repo = (await gh(`/repos/${fullName}`, token)) as { default_branch: string }
   const head = (await gh(
@@ -291,15 +330,7 @@ export async function openPullRequest(
     method: "POST",
     body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: head.object.sha }),
   })
-  await gh(`/repos/${fullName}/contents/${encodeGitHubPath(path)}`, token, {
-    method: "PUT",
-    body: JSON.stringify({
-      message,
-      content: b64encode(content),
-      branch,
-      ...(sha ? { sha } : {}),
-    }),
-  })
+  await commitToBranch(token, fullName, branch, path, content, message)
   const pr = (await gh(`/repos/${fullName}/pulls`, token, {
     method: "POST",
     body: JSON.stringify({

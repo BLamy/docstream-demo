@@ -3,6 +3,7 @@
 // @auth0/nextjs-auth0's getAccessTokenForConnection).
 
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN || "webreplay.us.auth0.com"
+const AUTH0_BASE = process.env.AUTH0_BASE_URL || `https://${AUTH0_DOMAIN}`
 const CONNECTION = process.env.AUTH0_GITHUB_CONNECTION || "github"
 
 const cache = new Map<string, { token: string; exp: number }>()
@@ -19,7 +20,7 @@ export async function githubTokenForUser(refreshToken: string): Promise<string> 
   const hit = cache.get(refreshToken)
   if (hit && hit.exp > Date.now() / 1000 + 60) return hit.token
 
-  const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+  const res = await fetch(`${AUTH0_BASE}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
