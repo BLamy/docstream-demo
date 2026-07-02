@@ -2,30 +2,55 @@
 // via Auth0 Token Vault), so all access is scoped to what the logged-in
 // GitHub user can see, and commits/PRs are authored as that user.
 
-const API = "https://api.github.com"
+const API = process.env.GITHUB_API_URL || "https://api.github.com"
 
-async function gh(path: string, token: string, init?: RequestInit) {
+export class GitHubRestError extends Error {
+  status: number
+
+  constructor(method: string, path: string, status: number, body: string) {
+    super(`GitHub ${method} ${path} -> ${status}: ${body}`)
+    this.status = status
+  }
+}
+
+async function gh(path: string, token?: string | null, init?: RequestInit) {
   const res = await fetch(`${API}${path}`, {
     ...init,
     headers: {
       accept: "application/vnd.github+json",
-      authorization: `Bearer ${token}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       "x-github-api-version": "2022-11-28",
       ...(init?.headers ?? {}),
     },
   })
   if (!res.ok) {
-    throw new Error(`GitHub ${init?.method ?? "GET"} ${path} -> ${res.status}: ${await res.text()}`)
+    throw new GitHubRestError(init?.method ?? "GET", path, res.status, await res.text())
   }
   return res.status === 204 ? null : res.json()
 }
 
 const b64encode = (s: string) => Buffer.from(s, "utf8").toString("base64")
 const b64decode = (s: string) => Buffer.from(s, "base64").toString("utf8")
+const encodeGitHubPath = (path: string) =>
+  path.split("/").map(encodeURIComponent).join("/")
 
 export interface Profile {
   user: { login: string; avatar: string }
   orgs: Array<{ login: string; avatar: string }>
+}
+
+export type RepoSource =
+  | { type: "default" }
+  | { type: "branch"; branch: string }
+  | { type: "pull"; number: number }
+
+interface ResolvedRepoSource {
+  treeFullName: string
+  branch: string
+  ref: string
+  treeRef: string
+  assetRepo: string
+  htmlUrl: string
 }
 
 /** The logged-in user and the orgs they belong to (for the owner switcher). */
@@ -55,18 +80,128 @@ export async function listUserRepos(token: string): Promise<string[]> {
   return repos.map((r) => r.full_name)
 }
 
-/** All markdown file paths in the repo's default branch, recursively. */
+async function resolveBranch(
+  token: string | null,
+  fullName: string,
+  branchName: string
+): Promise<{ name: string; sha: string; treeSha: string }> {
+  const branchPaths = [
+    encodeURIComponent(branchName),
+    encodeGitHubPath(branchName),
+  ].filter((path, index, paths) => paths.indexOf(path) === index)
+
+  for (const branchPath of branchPaths) {
+    try {
+      const branch = (await gh(`/repos/${fullName}/branches/${branchPath}`, token)) as {
+        name: string
+        commit: { sha: string }
+      }
+      return {
+        name: branch.name,
+        sha: branch.commit.sha,
+        treeSha: await resolveCommitTreeSha(token, fullName, branch.commit.sha),
+      }
+    } catch {
+      /* Try the next branch path form. */
+    }
+  }
+
+  const refs = (await gh(
+    `/repos/${fullName}/git/matching-refs/heads/${encodeGitHubPath(branchName)}`,
+    token
+  ).catch(() => [])) as Array<{ ref: string; object: { sha: string } }>
+  const exact = refs.find((ref) => ref.ref === `refs/heads/${branchName}`)
+  if (exact) {
+    return {
+      name: branchName,
+      sha: exact.object.sha,
+      treeSha: await resolveCommitTreeSha(token, fullName, exact.object.sha),
+    }
+  }
+
+  throw new Error(`Branch not found: ${branchName}`)
+}
+
+async function resolveCommitTreeSha(
+  token: string | null,
+  fullName: string,
+  commitSha: string
+): Promise<string> {
+  const commit = (await gh(`/repos/${fullName}/git/commits/${commitSha}`, token)) as {
+    tree?: { sha?: string }
+    commit?: { tree?: { sha?: string } }
+  }
+  const treeSha = commit.tree?.sha ?? commit.commit?.tree?.sha
+  if (!treeSha) throw new Error(`Tree not found for commit: ${commitSha}`)
+  return treeSha
+}
+
+async function resolveRepoSource(
+  token: string | null,
+  fullName: string,
+  source: RepoSource = { type: "default" }
+): Promise<ResolvedRepoSource> {
+  const repo = (await gh(`/repos/${fullName}`, token)) as {
+    default_branch: string
+    html_url: string
+  }
+
+  if (source.type === "pull") {
+    const pr = (await gh(`/repos/${fullName}/pulls/${source.number}`, token)) as {
+      html_url: string
+      head: { sha: string; ref: string; repo: { full_name: string } | null }
+      number: number
+    }
+    if (!pr.head.repo) throw new Error(`Pull request head is unavailable: #${source.number}`)
+    return {
+      treeFullName: pr.head.repo.full_name,
+      branch: `PR #${pr.number}: ${pr.head.ref}`,
+      ref: pr.head.sha,
+      treeRef: await resolveCommitTreeSha(token, pr.head.repo.full_name, pr.head.sha),
+      assetRepo: pr.head.repo.full_name,
+      htmlUrl: pr.html_url,
+    }
+  }
+
+  if (source.type === "branch") {
+    const branch = await resolveBranch(token, fullName, source.branch)
+    return {
+      treeFullName: fullName,
+      branch: branch.name,
+      ref: branch.sha,
+      treeRef: branch.treeSha,
+      assetRepo: fullName,
+      htmlUrl: `${repo.html_url}/tree/${encodeGitHubPath(branch.name)}`,
+    }
+  }
+
+  const branch = await resolveBranch(token, fullName, repo.default_branch)
+  return {
+    treeFullName: fullName,
+    branch: branch.name,
+    ref: branch.sha,
+    treeRef: branch.treeSha,
+    assetRepo: fullName,
+    htmlUrl: repo.html_url,
+  }
+}
+
+/** All markdown file paths in the requested repo ref, recursively. */
 export async function listMarkdownTree(
-  token: string,
-  fullName: string
-): Promise<{ branch: string; files: string[] }> {
-  const repo = (await gh(`/repos/${fullName}`, token)) as { default_branch: string }
+  token: string | null,
+  fullName: string,
+  source?: RepoSource
+): Promise<{ branch: string; ref: string; assetRepo: string; htmlUrl: string; files: string[] }> {
+  const resolved = await resolveRepoSource(token, fullName, source)
   const tree = (await gh(
-    `/repos/${fullName}/git/trees/${repo.default_branch}?recursive=1`,
+    `/repos/${resolved.treeFullName}/git/trees/${encodeURIComponent(resolved.treeRef)}?recursive=1`,
     token
   )) as { tree: Array<{ path: string; type: string }> }
   return {
-    branch: repo.default_branch,
+    branch: resolved.branch,
+    ref: resolved.ref,
+    assetRepo: resolved.assetRepo,
+    htmlUrl: resolved.htmlUrl,
     files: tree.tree
       .filter((e) => e.type === "blob" && e.path.endsWith(".md"))
       .map((e) => e.path)
@@ -75,15 +210,46 @@ export async function listMarkdownTree(
 }
 
 export async function getFile(
-  token: string,
+  token: string | null,
   fullName: string,
-  path: string
+  path: string,
+  ref?: string
 ): Promise<{ content: string; sha: string }> {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : ""
   const file = (await gh(
-    `/repos/${fullName}/contents/${encodeURIComponent(path)}`,
+    `/repos/${fullName}/contents/${encodeGitHubPath(path)}${query}`,
     token
   )) as { content: string; sha: string }
   return { content: b64decode(file.content.replace(/\n/g, "")), sha: file.sha }
+}
+
+export async function getFileFromSource(
+  token: string | null,
+  fullName: string,
+  path: string,
+  source?: RepoSource
+): Promise<{ content: string; sha: string }> {
+  const resolved = await resolveRepoSource(token, fullName, source)
+  const tree = (await gh(
+    `/repos/${resolved.treeFullName}/git/trees/${encodeURIComponent(resolved.treeRef)}?recursive=1`,
+    token
+  )) as { tree: Array<{ path: string; type: string; sha: string }> }
+  const entry = tree.tree.find((item) => item.type === "blob" && item.path === path)
+  if (!entry) {
+    throw new GitHubRestError(
+      "GET",
+      `/repos/${resolved.treeFullName}/contents/${encodeGitHubPath(path)}`,
+      404,
+      "Not Found"
+    )
+  }
+  const blob = (await gh(
+    `/repos/${resolved.treeFullName}/git/blobs/${encodeURIComponent(entry.sha)}`,
+    token
+  )) as { content: string; encoding: string; sha: string }
+  const content =
+    blob.encoding === "base64" ? b64decode(blob.content.replace(/\n/g, "")) : blob.content
+  return { content, sha: blob.sha }
 }
 
 /** Commits one file directly to the default branch. */
@@ -95,7 +261,7 @@ export async function commitFile(
   message: string,
   sha?: string
 ): Promise<{ commitUrl: string }> {
-  const res = (await gh(`/repos/${fullName}/contents/${encodeURIComponent(path)}`, token, {
+  const res = (await gh(`/repos/${fullName}/contents/${encodeGitHubPath(path)}`, token, {
     method: "PUT",
     body: JSON.stringify({
       message,
@@ -125,7 +291,7 @@ export async function openPullRequest(
     method: "POST",
     body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: head.object.sha }),
   })
-  await gh(`/repos/${fullName}/contents/${encodeURIComponent(path)}`, token, {
+  await gh(`/repos/${fullName}/contents/${encodeGitHubPath(path)}`, token, {
     method: "PUT",
     body: JSON.stringify({
       message,

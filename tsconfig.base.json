@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/blamy-notes/src/*"],
+      "@brett_lamy/docstream": ["packages/docstream/src/index.ts"],
+      "@brett_lamy/docstream/*": ["packages/docstream/src/*"],
+      "@brett_lamy/docstream-editor": ["packages/docstream-editor/src/index.ts"],
+      "@brett_lamy/docstream-editor/*": ["packages/docstream-editor/src/*"]
+    }
+  }
+}

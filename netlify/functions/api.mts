@@ -1,12 +1,15 @@
 import type { Config, Context } from "@netlify/functions"
-import { createRemoteJWKSet, jwtVerify } from "jose"
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose"
 
 import {
   commitFile,
   getFile,
+  getFileFromSource,
+  GitHubRestError,
   listMarkdownTree,
   listUserRepos,
   openPullRequest,
+  type RepoSource,
   userProfile,
 } from "./lib/github.ts"
 import { GithubNotConnectedError, githubTokenForUser } from "./lib/auth0-vault.ts"
@@ -23,8 +26,12 @@ const AUTH0_CLIENT_ID = process.env.AUTH0_CLIENT_ID
 const AUTH0_CLIENT_SECRET = process.env.AUTH0_CLIENT_SECRET
 const COOKIE = "auth_token"
 const REFRESH_COOKIE = "auth_refresh"
-// AUTH_DISABLED lets the API run open until the Auth0 .env is provisioned.
-const AUTH_DISABLED = process.env.AUTH_DISABLED === "true"
+// AUTH_BYPASS_JWT: when set, auth is bypassed — every request is treated as
+// authenticated, with `sub` taken from this JWT. For local testing/scripting.
+const AUTH_BYPASS_JWT = process.env.AUTH_BYPASS_JWT
+// AUTH_BYPASS_REFRESH_TOKEN: an Auth0 refresh token used for the GitHub
+// Token Vault exchange when no session refresh cookie is present.
+const AUTH_BYPASS_REFRESH_TOKEN = process.env.AUTH_BYPASS_REFRESH_TOKEN
 
 const jwks = createRemoteJWKSet(
   new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
@@ -104,7 +111,9 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
   if (sub === "/me" && req.method === "GET") {
     const session = await ensureSession(req)
     if (session.failed || !session.sub) return json({ error: "not authenticated" }, 401)
-    const res = json({ sub: session.sub })
+    const { ensureAccountWorkspace } = await import("./lib/workspaces.ts")
+    const accountWorkspace = await ensureAccountWorkspace(session.sub)
+    const res = json({ sub: session.sub, ...accountWorkspace })
     for (const c of session.cookies) res.headers.append("set-cookie", c)
     return res
   }
@@ -135,7 +144,18 @@ const refreshedTokens = new WeakMap<Request, string>()
  * refresh-token grant when it is missing or expired.
  */
 async function ensureSession(req: Request): Promise<Session> {
-  if (AUTH_DISABLED) return { cookies: [] }
+  // When a bypass JWT is configured, the session is always authenticated.
+  // The token need not be presented (the SPA uses cookies); we derive `sub`
+  // from the bypass JWT itself, or from a matching Bearer token if sent.
+  if (AUTH_BYPASS_JWT) {
+    let sub = "auth-bypass"
+    try {
+      sub = String(decodeJwt(AUTH_BYPASS_JWT).sub ?? sub)
+    } catch {
+      /* not a decodable JWT — keep the placeholder sub */
+    }
+    return { cookies: [], sub }
+  }
 
   const token = bearerOrCookieToken(req)
   if (token) {
@@ -184,7 +204,10 @@ async function ensureSession(req: Request): Promise<Session> {
 
 /** GitHub access token for the logged-in user, via Auth0 Token Vault. */
 async function githubToken(req: Request): Promise<string> {
-  const refresh = refreshedTokens.get(req) ?? cookieValue(req, REFRESH_COOKIE)
+  const refresh =
+    AUTH_BYPASS_REFRESH_TOKEN ??
+    refreshedTokens.get(req) ??
+    cookieValue(req, REFRESH_COOKIE)
   if (!refresh) {
     throw new GithubNotConnectedError(
       "no refresh token in session — log in again (offline_access)"
@@ -197,7 +220,24 @@ function githubError(e: unknown): Response {
   if (e instanceof GithubNotConnectedError) {
     return json({ error: "github_not_connected", detail: e.detail }, 428)
   }
+  if (e instanceof GitHubRestError) {
+    return json({ error: e.message }, e.status)
+  }
   return json({ error: String(e) }, 502)
+}
+
+function publicRepoSource(url: URL): RepoSource {
+  const pull = url.searchParams.get("pull")
+  const branch = url.searchParams.get("branch")
+  if (pull) {
+    const number = Number(pull)
+    if (!Number.isInteger(number) || number < 1) {
+      throw new Error("pull must be a positive integer")
+    }
+    return { type: "pull", number }
+  }
+  if (branch) return { type: "branch", branch }
+  return { type: "default" }
 }
 
 async function handleGithub(req: Request, path: string): Promise<Response> {
@@ -214,6 +254,34 @@ async function handleGithub(req: Request, path: string): Promise<Response> {
   // Token Vault now, so this just drops the user back into the app.
   if (sub === "/callback" && req.method === "GET") {
     return new Response(null, { status: 302, headers: { location: "/" } })
+  }
+
+  // GET /github/public/repos/:owner/:repo/(tree|file)
+  // Public readonly preview endpoints intentionally skip Auth0. GitHub still
+  // enforces repository visibility and unauthenticated API rate limits.
+  const publicRepoMatch = sub.match(/^\/public\/repos\/([^/]+)\/([^/]+)\/(tree|file)$/)
+  if (publicRepoMatch) {
+    const fullName = `${decodeURIComponent(publicRepoMatch[1])}/${decodeURIComponent(publicRepoMatch[2])}`
+    const action = publicRepoMatch[3]
+    const url = new URL(req.url)
+    let source: RepoSource
+    try {
+      source = publicRepoSource(url)
+    } catch (e) {
+      return json({ error: String(e instanceof Error ? e.message : e) }, 400)
+    }
+    try {
+      if (action === "tree" && req.method === "GET") {
+        return json(await listMarkdownTree(null, fullName, source))
+      }
+      if (action === "file" && req.method === "GET") {
+        const filePath = url.searchParams.get("path")
+        if (!filePath) return json({ error: "path required" }, 400)
+        return json(await getFileFromSource(null, fullName, filePath, source))
+      }
+    } catch (e) {
+      return githubError(e)
+    }
   }
 
   // GET /github/profile — the user and their orgs, for the owner switcher
@@ -283,9 +351,10 @@ export default async (req: Request, _context: Context) => {
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api/, "") || "/"
 
-  // Auth endpoints, the GitHub webhook, and the install callback handle
+  // Auth endpoints, public GitHub preview, the GitHub webhook, and the install callback handle
   // their own authentication.
   if (path.startsWith("/auth")) return handleAuth(req, path)
+  if (path.startsWith("/github/public")) return handleGithub(req, path)
   if (path === "/github/webhook" || path === "/github/callback") {
     return handleGithub(req, path)
   }

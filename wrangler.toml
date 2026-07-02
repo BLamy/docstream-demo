@@ -1,0 +1,20 @@
+name = "collaborative-ai-editor"
+main = "worker/index.ts"
+compatibility_date = "2026-06-30"
+compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
+
+rules = [
+  { type = "CompiledWasm", globs = ["**/*.wasm"], fallthrough = true },
+  { type = "Data", globs = ["**/*.data"], fallthrough = true }
+]
+
+[vars]
+AUTH0_DOMAIN = "webreplay.us.auth0.com"
+AUTH0_AUDIENCE = ""
+AUTH0_GITHUB_CONNECTION = "github"
+PGLITE_DATA_DIR = "memory://"
+
+[assets]
+directory = "./dist/apps/blamy-notes"
+binding = "ASSETS"
+not_found_handling = "single-page-application"

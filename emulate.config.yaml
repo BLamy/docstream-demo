@@ -1,0 +1,14 @@
+github:
+  users:
+    - login: blamy
+      name: Brett Lamy
+      email: brett@example.test
+  tokens:
+    local_blamy_token:
+      login: blamy
+      scopes: [repo, user]
+  repos:
+    - owner: blamy
+      name: loop-qa
+      language: TypeScript
+      auto_init: true

@@ -1,44 +1,53 @@
-# Broken Todoist 🐛
+# blamy-notes
 
-A small **Todoist clone** built with **Vite + React 19 + shadcn/ui** on the front end and
-**Netlify Functions** for the API. It is **intentionally broken** — seeded with a handful of
-subtle, hard-to-debug *runtime* bugs — so it can be used to demo a time-travel / runtime
-debugger. The bugs are deliberate.
+An Nx workspace for the GitBook-style notes editor and extracted markdown rendering packages.
 
 ## Stack
-- Vite + React 19, TypeScript, Tailwind v4, shadcn/ui (radix-nova preset)
-- **Zustand** — UI / filter state
-- **TanStack Query** — server state
-- **Netlify Functions** (`netlify/functions/api.mts`) — in-memory REST API seeded with
-  Todoist-like tasks, projects, and labels
 
-## Run it
-The app needs both the Vite dev server and the Netlify Functions, so run it through the
-Netlify CLI (it proxies Vite on :5173 behind :8888 and mounts `/api/*`):
+- Nx workspace with Vite React apps
+- React 19, TypeScript, Tailwind v4, shadcn/ui
+- Netlify Functions for GitHub/Auth0-backed API routes
+- TipTap for the full GitBook-style editor
+- Streamdown for readonly AI stream markdown rendering
+
+## Run It
+
+The main editor app needs both Vite and Netlify Functions, so run it through Netlify:
 
 ```bash
 npm install
-npm start          # = netlify dev  → http://localhost:8888
+npm start
 ```
 
-Front end only (no API): `npm run dev`.
+By default Netlify proxies the Vite app on `:5173` behind `http://localhost:8888` and mounts `/api/*`.
+
+Run the readonly Streamdown example separately:
+
+```bash
+npx nx serve streamdown-example
+```
+
+The example serves on `http://localhost:5174`.
 
 ## Scripts
+
 | Script | What |
 |---|---|
-| `npm start` | `netlify dev` — full app + functions on :8888 |
-| `npm run dev` | Vite only |
-| `npm run build` | typecheck + production build |
-| `npm run typecheck` | `tsc --noEmit` |
+| `npm start` | Full main app through Netlify dev |
+| `npm run dev` | Main app Vite dev server through Nx |
+| `npm run build` | Main app typecheck + production build |
+| `npm run build:streamdown-example` | Streamdown example typecheck + production build |
+| `npm run typecheck` | Typecheck all Nx projects |
+| `npm run lint` | Lint all Nx projects |
+| `npm run roundtrip` | GitBook markdown parser/serializer round-trip tests |
 
 ## Layout
-```
-netlify/functions/api.mts       # REST API (routing)
-netlify/functions/lib/data.ts   # in-memory seed data
-src/store/ui-store.ts           # Zustand UI/filter store
-src/queries/tasks.ts            # TanStack Query hooks
-src/lib/{dates,task-filters}.ts # date + view/sort logic
-src/components/*                 # sidebar, views, task list, dialogs
-```
 
-The seeded "today" is **2026-06-08** to make the date-related bug reproducible.
+```text
+apps/blamy-notes                 # GitHub-backed notes editor app
+apps/streamdown-example          # Readonly AI stream renderer example
+packages/docstream               # GitBook parser/serializer + readonly renderers
+packages/docstream-editor        # Full TipTap GitBook editor package
+netlify/functions                # Netlify API functions
+scripts/roundtrip-test.ts        # GitBook markdown stability checks
+```

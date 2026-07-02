@@ -26,9 +26,19 @@ dist-ssr
 # Local Netlify folder
 .netlify
 
+# Local Nx cache
+.nx
+
+# Local PGlite state
+.data
+.pglite
+.wrangler
+.wrangler-dry-run
+
 # Playwright MCP artifacts
 .playwright-mcp
 
 .env
+.dev.vars
 
 *.pem

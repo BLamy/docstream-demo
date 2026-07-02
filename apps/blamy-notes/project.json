@@ -1,0 +1,45 @@
+{
+  "name": "blamy-notes",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/blamy-notes/src",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vite --config apps/blamy-notes/vite.config.ts"
+      }
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vite --config apps/blamy-notes/vite.config.ts"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/apps/blamy-notes"],
+      "options": {
+        "command": "tsc -p apps/blamy-notes/tsconfig.app.json --noEmit && tsc -p apps/blamy-notes/tsconfig.node.json --noEmit && vite build --config apps/blamy-notes/vite.config.ts"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p apps/blamy-notes/tsconfig.app.json --noEmit && tsc -p apps/blamy-notes/tsconfig.node.json --noEmit"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "eslint apps/blamy-notes"
+      }
+    },
+    "preview": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vite preview --config apps/blamy-notes/vite.config.ts"
+      }
+    }
+  }
+}

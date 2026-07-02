@@ -1,12 +1,12 @@
 {
+  "extends": "./tsconfig.base.json",
   "files": [],
   "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
-  ],
-  "compilerOptions": {
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
+    { "path": "./apps/blamy-notes/tsconfig.app.json" },
+    { "path": "./apps/blamy-notes/tsconfig.node.json" },
+    { "path": "./apps/streamdown-example/tsconfig.app.json" },
+    { "path": "./apps/streamdown-example/tsconfig.node.json" },
+    { "path": "./packages/docstream/tsconfig.json" },
+    { "path": "./packages/docstream-editor/tsconfig.json" }
+  ]
 }

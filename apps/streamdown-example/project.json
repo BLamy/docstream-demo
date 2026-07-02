@@ -1,0 +1,39 @@
+{
+  "name": "streamdown-example",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/streamdown-example/src",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vite --config apps/streamdown-example/vite.config.ts --port 5174"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/apps/streamdown-example"],
+      "options": {
+        "command": "tsc -p apps/streamdown-example/tsconfig.app.json --noEmit && tsc -p apps/streamdown-example/tsconfig.node.json --noEmit && vite build --config apps/streamdown-example/vite.config.ts"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p apps/streamdown-example/tsconfig.app.json --noEmit && tsc -p apps/streamdown-example/tsconfig.node.json --noEmit"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "eslint apps/streamdown-example"
+      }
+    },
+    "preview": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vite preview --config apps/streamdown-example/vite.config.ts --port 4174"
+      }
+    }
+  }
+}
