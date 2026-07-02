@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "nx serve blamy-notes",
     "start": "netlify dev",
+    "setup:emulate": "pnpm --dir emulate install && pnpm --dir emulate --filter '@emulators/*' build && pnpm --dir emulate --filter emulate build",
+    "dev:emulate": "node emulate/packages/emulate/dist/index.js start --service github,auth0,stripe --seed emulate.config.yaml",
+    "dev:stack": "node scripts/dev-stack.mjs",
     "build": "nx build blamy-notes",
     "build:streamdown-example": "nx build streamdown-example",
     "lint": "nx run-many -t lint",
@@ -63,7 +66,6 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
     "drizzle-kit": "^0.31.10",
-    "emulate": "^0.8.0",
     "eslint": "^10",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",

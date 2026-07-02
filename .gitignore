@@ -35,6 +35,9 @@ dist-ssr
 .wrangler
 .wrangler-dry-run
 
+# Local dev stack state (emulators + PGlite)
+.dev-stack
+
 # Playwright MCP artifacts
 .playwright-mcp
 
@@ -42,3 +45,7 @@ dist-ssr
 .dev.vars
 
 *.pem
+.playwright-cli
+
+# Raw browser capture files (keep only final MP4s)
+recordings/*.capture.webm

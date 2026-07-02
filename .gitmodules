@@ -1,0 +1,3 @@
+[submodule "emulate"]
+	path = emulate
+	url = https://github.com/BLamy/emulate.git
