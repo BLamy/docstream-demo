@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Book,
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Eye,
   ExternalLink,
   FileText,
   Folder,
   GitBranch,
   GitPullRequest,
+  Globe,
   Loader2,
+  Lock,
   LogOut,
   PenLine,
   Search,
+  Sparkles,
   X,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -24,6 +29,7 @@ import { DocsRenderer, parseMarkdown, setAssetBase } from "@brett_lamy/docstream
 import { api, type PublicRepoSource } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import DocsSite from "@/docs/DocsSite"
 
 type View = "edit" | "preview" | "markdown"
 
@@ -36,6 +42,10 @@ interface PublicGithubPreview {
 
 function isPublicGithubRoute(pathname: string) {
   return pathname === "/github.com" || pathname.startsWith("/github.com/")
+}
+
+function isDocsRoute(pathname: string) {
+  return pathname === "/docs" || pathname.startsWith("/docs/")
 }
 
 function decodePathPart(part: string) {
@@ -178,11 +188,19 @@ function FileTree({
 // ---------- App ----------
 
 export default function App() {
+  if (isDocsRoute(window.location.pathname)) {
+    return <DocsSite />
+  }
+  return <NotesApp />
+}
+
+function NotesApp() {
   const publicRouteRequested = isPublicGithubRoute(window.location.pathname)
   const publicPreview = useMemo(
     () => parsePublicGithubPreview(window.location.pathname),
     []
   )
+  const queryClient = useQueryClient()
   const [repo, setRepo] = useState<string | null>(() => publicPreview?.repo ?? null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [view, setView] = useState<View>(() => (publicPreview ? "preview" : "edit"))
@@ -213,6 +231,58 @@ export default function App() {
     reposQuery.isError &&
     String(reposQuery.error).includes("github_not_connected")
 
+  // Plan + published repos (the SaaS surface).
+  const billing = useQuery({
+    queryKey: ["billing"],
+    queryFn: api.billing,
+    enabled: shouldLoadUserRepos,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const shares = useQuery({
+    queryKey: ["shares"],
+    queryFn: api.shares,
+    enabled: shouldLoadUserRepos,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const plan = billing.data?.plan ?? "free"
+  const proPriceLabel = billing.data?.proPrice
+    ? `$${(billing.data.proPrice.unitAmount / 100).toFixed(0)}`
+    : null
+
+  // Landing back from Stripe Checkout: verify the session server-side, then
+  // drop the marker URL.
+  useEffect(() => {
+    if (window.location.pathname !== "/billing/success") return
+    const sessionId = new URLSearchParams(window.location.search).get("session_id")
+    window.history.replaceState({}, "", "/")
+    if (!sessionId) return
+    api
+      .billingConfirm(sessionId)
+      .then((res) => {
+        if (res.plan === "pro") {
+          toast.success("Welcome to Pro! Publishing is now unlocked.")
+        } else {
+          toast.error(`Payment not completed (status: ${res.paymentStatus})`)
+        }
+        queryClient.invalidateQueries({ queryKey: ["billing"] })
+      })
+      .catch((e) => toast.error(String(e instanceof Error ? e.message : e)))
+  }, [queryClient])
+
+  const [upgrading, setUpgrading] = useState(false)
+  const upgrade = async () => {
+    setUpgrading(true)
+    try {
+      const { url } = await api.billingCheckout()
+      window.location.assign(url)
+    } catch (e) {
+      toast.error(String(e instanceof Error ? e.message : e))
+      setUpgrading(false)
+    }
+  }
+
   // Owner switcher: the user plus their orgs (plus any other owners that
   // appear among accessible repos, e.g. collaborator repos).
   const owners = useMemo(() => {
@@ -222,7 +292,7 @@ export default function App() {
       for (const o of profile.data.orgs) known.set(o.login, o.avatar)
     }
     for (const r of allRepos) {
-      const o = r.split("/")[0]
+      const o = r.full_name.split("/")[0]
       if (!known.has(o)) known.set(o, `https://github.com/${o}.png?size=48`)
     }
     return [...known.entries()].map(([login, avatar]) => ({ login, avatar }))
@@ -240,9 +310,56 @@ export default function App() {
   const searching = search.trim().length > 0
   const repos = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (q) return allRepos.filter((r) => r.toLowerCase().includes(q))
-    return allRepos.filter((r) => !activeOwner || r.split("/")[0] === activeOwner.login)
+    if (q) return allRepos.filter((r) => r.full_name.toLowerCase().includes(q))
+    return allRepos.filter(
+      (r) => !activeOwner || r.full_name.split("/")[0] === activeOwner.login
+    )
   }, [allRepos, activeOwner, search])
+
+  // Publish state for the selected repo.
+  const selectedRepoInfo = allRepos.find((r) => r.full_name === repo) ?? null
+  const activeShare = shares.data?.shares.find((s) => s.repo === repo) ?? null
+  const [sharePanelOpen, setSharePanelOpen] = useState(false)
+  const [shareBusy, setShareBusy] = useState(false)
+  const publicShareUrl = repo ? `${window.location.origin}/github.com/${repo}` : ""
+
+  const publish = async () => {
+    if (!repo) return
+    setShareBusy(true)
+    try {
+      await api.createShare(repo)
+      await queryClient.invalidateQueries({ queryKey: ["shares"] })
+      toast.success("Published! Anyone with the link can read these docs.", {
+        action: {
+          label: "Copy link",
+          onClick: () => navigator.clipboard.writeText(publicShareUrl),
+        },
+      })
+    } catch (e) {
+      const message = String(e instanceof Error ? e.message : e)
+      if (message.includes("pro_plan_required")) {
+        toast.error("Publishing requires the Pro plan.")
+      } else {
+        toast.error(message)
+      }
+    } finally {
+      setShareBusy(false)
+    }
+  }
+
+  const unpublish = async () => {
+    if (!activeShare) return
+    setShareBusy(true)
+    try {
+      await api.deleteShare(activeShare.id)
+      await queryClient.invalidateQueries({ queryKey: ["shares"] })
+      toast.success("Unpublished. The public link no longer works.")
+    } catch (e) {
+      toast.error(String(e instanceof Error ? e.message : e))
+    } finally {
+      setShareBusy(false)
+    }
+  }
 
   const tree = useQuery({
     queryKey: ["tree", repo, publicPreview?.source],
@@ -496,14 +613,15 @@ export default function App() {
               </div>
             </div>
           ) : repos.map((r) => {
-            const [repoOwner, name] = r.split("/")
-            const active = r === repo
+            const [repoOwner, name] = r.full_name.split("/")
+            const active = r.full_name === repo
             const foreign = searching && repoOwner !== activeOwner?.login
+            const published = shares.data?.shares.some((s) => s.repo === r.full_name)
             return (
-              <div key={r}>
+              <div key={r.full_name}>
                 <button
                   className={`repo-item ${active ? "repo-item-active" : ""}`}
-                  onClick={() => selectRepo(r)}
+                  onClick={() => selectRepo(r.full_name)}
                 >
                   {active ? (
                     <ChevronDown className="size-3.5 shrink-0" />
@@ -512,6 +630,10 @@ export default function App() {
                   )}
                   <GitBranch className="size-3.5 shrink-0" />
                   <span className="truncate">{name}</span>
+                  {r.private && (
+                    <Lock className="gb-repo-visibility size-3" aria-label="Private repository" />
+                  )}
+                  {published && <span className="gb-published-dot" title="Published" />}
                   {foreign && <span className="repo-owner">{repoOwner}</span>}
                 </button>
                 {active && (
@@ -551,9 +673,38 @@ export default function App() {
               <ExternalLink className="size-4" /> View on GitHub
             </a>
           ) : (
-            <Button variant="ghost" size="sm" onClick={logout}>
-              <LogOut className="size-4" /> Log out
-            </Button>
+            <>
+              <div className="gb-plan-row">
+                <span
+                  className={`gb-plan-badge ${plan === "pro" ? "gb-plan-badge-pro" : ""}`}
+                  data-testid="plan-badge"
+                >
+                  {plan === "pro" ? "Pro" : "Free"}
+                </span>
+                {plan === "free" && (
+                  <Button
+                    className="gb-upgrade-btn"
+                    size="sm"
+                    variant="outline"
+                    disabled={upgrading}
+                    onClick={upgrade}
+                  >
+                    {upgrading ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-3.5" />
+                    )}
+                    Upgrade{proPriceLabel ? ` · ${proPriceLabel}` : ""}
+                  </Button>
+                )}
+              </div>
+              <a className="gb-sidebar-link" href="/docs">
+                <BookOpen className="size-4" /> Documentation
+              </a>
+              <Button variant="ghost" size="sm" onClick={logout}>
+                <LogOut className="size-4" /> Log out
+              </Button>
+            </>
           )}
         </div>
       </aside>
@@ -585,6 +736,17 @@ export default function App() {
               </button>
             ))}
           </div>
+          {!publicPreview && repo && (
+            <Button
+              size="sm"
+              variant={activeShare ? "outline" : "ghost"}
+              onClick={() => setSharePanelOpen((o) => !o)}
+              data-testid="publish-toggle"
+            >
+              <Globe className="size-3.5" />
+              {activeShare ? "Public" : "Publish"}
+            </Button>
+          )}
           {!publicPreview && filePath && (
             <div className="gb-sync">
               <span className={`gb-sync-state ${dirty ? "gb-sync-dirty" : ""}`}>
@@ -620,6 +782,81 @@ export default function App() {
             </div>
           )}
         </header>
+
+        {!publicPreview && sharePanelOpen && repo && (
+          <div className="gb-share-panel" data-testid="share-panel">
+            {activeShare ? (
+              <>
+                <div className="gb-share-copy">
+                  <Globe className="size-3.5 shrink-0" />
+                  <span>{publicShareUrl}</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    navigator.clipboard.writeText(publicShareUrl)
+                    toast.success("Public link copied")
+                  }}
+                >
+                  <Copy className="size-3.5" /> Copy link
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={publicShareUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink className="size-3.5" /> Open
+                  </a>
+                </Button>
+                <Button size="sm" variant="ghost" disabled={shareBusy} onClick={unpublish}>
+                  {shareBusy && <Loader2 className="size-3.5 animate-spin" />}
+                  Unpublish
+                </Button>
+                <span className="gb-share-note">
+                  Anyone with this link can read the rendered markdown in{" "}
+                  <strong>{repo}</strong>
+                  {selectedRepoInfo?.private ? " — including this private repo." : "."}
+                </span>
+              </>
+            ) : plan === "pro" || !selectedRepoInfo?.private ? (
+              <>
+                <span className="gb-share-note">
+                  Publish <strong>{repo}</strong> as a public, read-only docs site at{" "}
+                  <code>{publicShareUrl}</code>
+                  {selectedRepoInfo?.private &&
+                    " — this repo is private; anyone with the link will be able to read its markdown."}
+                </span>
+                <Button size="sm" disabled={shareBusy} onClick={publish} data-testid="publish-confirm">
+                  {shareBusy ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Globe className="size-3.5" />
+                  )}
+                  Publish to the web
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSharePanelOpen(false)}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <span className="gb-share-note">
+                  <strong>{repo}</strong> is a private repository. Publishing private repos
+                  as public docs sites is a <strong>Pro</strong> feature.
+                </span>
+                <Button size="sm" disabled={upgrading} onClick={upgrade} data-testid="paywall-upgrade">
+                  {upgrading ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-3.5" />
+                  )}
+                  Upgrade to Pro{proPriceLabel ? ` — ${proPriceLabel}` : ""}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSharePanelOpen(false)}>
+                  Not now
+                </Button>
+              </>
+            )}
+          </div>
+        )}
 
         {!publicPreview && pendingMode && (
           <div className="gb-commit-panel">
