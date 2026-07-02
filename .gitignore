@@ -47,5 +47,7 @@ dist-ssr
 *.pem
 .playwright-cli
 
-# Raw browser capture files (keep only final MP4s)
-recordings/*.capture.webm
+# Browser session recordings are never committed — attach the MP4 to the
+# pull request instead (see .claude/skills/replayio SKILL.md, "MP4 Video
+# Contract"). Replay recording URLs carry the runtime evidence.
+recordings/
