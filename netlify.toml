@@ -18,3 +18,18 @@
   from = "/github.com/*"
   to = "/index.html"
   status = 200
+
+[[redirects]]
+  from = "/docs"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/docs/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/billing/*"
+  to = "/index.html"
+  status = 200
