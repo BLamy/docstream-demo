@@ -40,13 +40,26 @@ const emulator = spawnLogged(
 )
 
 const app = spawnLogged(
-  "npx",
-  ["netlify", "dev", "--filter", "blamy-notes", "--port", String(APP_PORT)],
+  "./node_modules/.bin/netlify",
+  [
+    "dev",
+    "--offline",
+    "--command",
+    "./node_modules/.bin/vite --config apps/blamy-notes/vite.config.ts",
+    "--target-port",
+    "5173",
+    "--filter",
+    "blamy-notes",
+    "--port",
+    String(APP_PORT),
+  ],
   {
   name: "app",
   cwd: ROOT,
   env: {
     ...process.env,
+    // A stale Nx daemon can leave Netlify waiting forever for Vite's port.
+    NX_DAEMON: "false",
     // GitHub API → emulator; the seeded token arrives via the Auth0 JWT claim.
     GITHUB_API_URL: GITHUB_URL,
     // Auth0 → emulator: token endpoint, JWKS, issuer, and the password login.
@@ -55,7 +68,11 @@ const app = spawnLogged(
     AUTH0_CLIENT_SECRET: "blamy-notes-local-secret",
     AUTH0_AUDIENCE: "https://blamy-notes.local/api",
     AUTH0_REALM: "Username-Password-Authentication",
-    VITE_AUTH0_PASSWORD_LOGIN: "true",
+    VITE_AUTH0_DOMAIN: "127.0.0.1:4301",
+    VITE_AUTH0_BASE_URL: AUTH0_URL,
+    VITE_AUTH0_CLIENT_ID: "blamy-notes-local",
+    VITE_AUTH0_AUDIENCE: "https://blamy-notes.local/api",
+    VITE_AUTH0_PASSWORD_LOGIN: "",
     // Stripe → emulator.
     STRIPE_API_URL: STRIPE_URL,
     STRIPE_SECRET_KEY: "sk_test_emulated",
@@ -93,7 +110,7 @@ try {
   await seedGithub(GITHUB_URL, GITHUB_TOKEN)
   await waitForHttp(APP_URL, { timeoutMs: 180_000 })
   console.log(`[stack] ready:
-  app     ${APP_URL}   (login: brett@blamy.dev / DemoPass123!)
+  app     ${APP_URL}   (Auth0 browser login via ${AUTH0_URL}/authorize)
   github  ${GITHUB_URL}
   auth0   ${AUTH0_URL}
   stripe  ${STRIPE_URL}`)

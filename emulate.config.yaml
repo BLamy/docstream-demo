@@ -54,8 +54,11 @@ auth0:
       client_secret: blamy-notes-local-secret
       name: Blamy Notes (local)
       grant_types:
+        - authorization_code
         - http://auth0.com/oauth/grant-type/password-realm
         - refresh_token
+      redirect_uris:
+        - http://localhost:8899
 
 stripe:
   port: 4302

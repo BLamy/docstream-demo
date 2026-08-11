@@ -11,6 +11,8 @@ export default defineConfig({
   envDir: workspaceRoot,
   plugins: [react(), tailwindcss()],
   resolve: {
+    // Linked workspace packages must share the app's React runtime.
+    dedupe: ["react", "react-dom"],
     alias: [
       { find: "@", replacement: path.resolve(__dirname, "./src") },
       {

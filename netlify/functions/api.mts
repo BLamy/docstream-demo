@@ -98,12 +98,13 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
     if (!AUTH0_CLIENT_ID || !AUTH0_CLIENT_SECRET) {
       return json({ error: "auth not configured" }, 500)
     }
-    const { code, redirect_uri } = (await req.json()) as {
+    const { code, redirect_uri, code_verifier } = (await req.json()) as {
       code?: string
       redirect_uri?: string
+      code_verifier?: string
     }
-    if (!code || !redirect_uri) {
-      return json({ error: "code and redirect_uri required" }, 400)
+    if (!code || !redirect_uri || !code_verifier) {
+      return json({ error: "code, redirect_uri, and code_verifier required" }, 400)
     }
     const res = await fetch(`${AUTH0_BASE}/oauth/token`, {
       method: "POST",
@@ -114,6 +115,7 @@ async function handleAuth(req: Request, path: string): Promise<Response> {
         client_secret: AUTH0_CLIENT_SECRET,
         code,
         redirect_uri,
+        code_verifier,
       }),
     })
     if (!res.ok) {
