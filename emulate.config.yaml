@@ -36,6 +36,9 @@ auth0:
     - name: Username-Password-Authentication
       strategy: auth0
   users:
+    - email: testuser@auth0.local
+      app_metadata:
+        github_token: local_blamy_token
     - email: brett@blamy.dev
       password: DemoPass123!
       email_verified: true
