@@ -21,6 +21,7 @@
     "preview": "nx preview blamy-notes"
   },
   "dependencies": {
+    "@agent-wasm/core": "^0.4.0",
     "@electric-sql/pglite": "^0.5.3",
     "@fontsource-variable/geist": "^5.2.9",
     "@netlify/blobs": "^10.7.9",
