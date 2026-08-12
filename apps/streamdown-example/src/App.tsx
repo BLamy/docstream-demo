@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Moon, Palette, Pause, Play, RotateCcw, Sparkles, Sun } from "lucide-react"
-import { GitbookStreamdown } from "@brett_lamy/docstream"
+import { GitbookStreamdown, ReactDemo } from "@brett_lamy/docstream"
 
 const SAMPLE = `# Weekly engineering summary
 
@@ -51,6 +51,34 @@ export function summarizeToken(token: string) {
 `
 
 const CHUNK_SIZE = 18
+const REACT_DEMO_FILES = {
+  "/src/main.jsx": `
+import React from "react"
+import { createRoot } from "react-dom/client"
+import App from "./App.jsx"
+
+createRoot(document.getElementById("root")).render(<App />)
+`,
+  "/src/App.jsx": `
+import Badge from "./Badge.jsx"
+
+export default function App() {
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 24 }}>
+      <Badge />
+      <h1>Multi-file React demo</h1>
+      <p>This app is running from an almost-node virtual filesystem.</p>
+    </main>
+  )
+}
+`,
+  "/src/Badge.jsx": `
+export default function Badge() {
+  return <span style={{ color: "#0f766e", fontWeight: 700 }}>docstream + almost-node</span>
+}
+`,
+} as const
+
 const THEME_OPTIONS = [
   { id: "neutral", label: "Neutral", swatch: "oklch(0.45 0.02 250)" },
   { id: "supabase", label: "Supabase", swatch: "oklch(0.62 0.16 155)" },
@@ -180,6 +208,17 @@ export default function App() {
             <GitbookStreamdown markdown={rendered} isStreaming={streaming} />
           </div>
         </article>
+      </section>
+
+      <section className="stream-demo-section">
+        <div className="stream-demo-heading">
+          <div>
+            <span className="stream-demo-kicker">Almost-node runtime</span>
+            <h2>Multi-file React preview</h2>
+          </div>
+          <p>Every source file is written into a virtual filesystem before Vite starts.</p>
+        </div>
+        <ReactDemo files={REACT_DEMO_FILES} entry="/src/main.jsx" title="React demo" />
       </section>
     </main>
   )

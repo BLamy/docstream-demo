@@ -1,4 +1,4 @@
-import { parseMarkdown, serializeMarkdown } from "@brett_lamy/docstream"
+import { parseMarkdown, serializeMarkdown } from "@brett_lamy/docstream/gitbook"
 
 const sample = `# Getting Started
 
