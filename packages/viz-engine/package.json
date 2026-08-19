@@ -1,0 +1,53 @@
+{
+  "name": "@brett_lamy/viz-engine",
+  "version": "0.1.0",
+  "description": "A declarative, audio-synchronized SVG timeline engine for narrated explainers.",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./draw": {
+      "types": "./dist/draw.d.ts",
+      "import": "./dist/draw.js"
+    },
+    "./acts": {
+      "types": "./dist/acts.d.ts",
+      "import": "./dist/acts.js"
+    },
+    "./narrator": {
+      "types": "./dist/narrator.d.ts",
+      "import": "./dist/narrator.js"
+    },
+    "./styles.css": "./dist/style.css"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "build": "cd ../.. && vite build -c packages/viz-engine/vite.config.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "katex": "^0.17.0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

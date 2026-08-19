@@ -1,0 +1,15 @@
+[data-viz-player] {
+  width: 100%;
+}
+
+.video-embed__media {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: #111;
+}
+
+iframe.video-embed__media {
+  min-height: 220px;
+}

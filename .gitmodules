@@ -3,7 +3,7 @@
 	url = https://github.com/BLamy/emulate.git
 [submodule "packages/docstream"]
 	path = packages/docstream
-	url = https://github.com/BLamy/docstream.git
+	url = git@github.com:BLamy/docstream.git
 [submodule "packages/docstream-editor"]
 	path = packages/docstream-editor
-	url = https://github.com/BLamy/docstream-editor.git
+	url = git@github.com:BLamy/docstream-editor.git
