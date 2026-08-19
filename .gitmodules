@@ -7,3 +7,6 @@
 [submodule "packages/docstream-editor"]
 	path = packages/docstream-editor
 	url = git@github.com:BLamy/docstream-editor.git
+[submodule "packages/viz-engine"]
+	path = packages/viz-engine
+	url = git@github.com:BLamy/viz-engine.git
