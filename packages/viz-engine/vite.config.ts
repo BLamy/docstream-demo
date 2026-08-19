@@ -34,6 +34,9 @@ export default defineConfig({
     },
     rollupOptions: {
       external,
+      output: {
+        assetFileNames: 'styles.css',
+      },
     },
     sourcemap: true,
   },

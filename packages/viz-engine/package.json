@@ -1,6 +1,6 @@
 {
   "name": "@brett_lamy/viz-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A declarative, audio-synchronized SVG timeline engine for narrated explainers.",
   "type": "module",
   "files": [
@@ -9,25 +9,25 @@
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/src/index.d.ts",
       "import": "./dist/index.js"
     },
     "./draw": {
-      "types": "./dist/draw.d.ts",
+      "types": "./dist/src/draw.d.ts",
       "import": "./dist/draw.js"
     },
     "./acts": {
-      "types": "./dist/acts.d.ts",
+      "types": "./dist/src/acts.d.ts",
       "import": "./dist/acts.js"
     },
     "./narrator": {
-      "types": "./dist/narrator.d.ts",
+      "types": "./dist/src/narrator.d.ts",
       "import": "./dist/narrator.js"
     },
-    "./styles.css": "./dist/style.css"
+    "./styles.css": "./dist/styles.css"
   },
   "sideEffects": [
     "*.css"

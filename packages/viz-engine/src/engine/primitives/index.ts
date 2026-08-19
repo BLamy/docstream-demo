@@ -16,3 +16,15 @@ export type { ServiceKind } from './service';
 export { Connection, polylineLength, pointAlong } from './connection';
 export type { Pt } from './connection';
 export { RequestFlow } from './flow';
+export {
+  ArchitectureFrame,
+  ArchitectureCard,
+  ArchitectureEdge,
+  ArchitectureGrid,
+  ArchitecturePhaseRail,
+} from './architecture';
+export type {
+  ArchitectureTone,
+  ArchitecturePoint,
+  ArchitectureGridCell,
+} from './architecture';

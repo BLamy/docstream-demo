@@ -27,6 +27,38 @@ export function Demo() {
 The package also exposes `@brett_lamy/viz-engine/draw`, `/acts`, and
 `/narrator` for the lower-level compatibility APIs.
 
+## Architecture diagrams
+
+The architecture vocabulary is designed for explanatory diagrams rather than
+static infrastructure inventories. `ArchitectureFrame` supplies the restrained
+paper canvas, `ArchitectureCard` gives typed nodes a consistent editorial
+hierarchy, `ArchitectureEdge` routes labeled traffic with scrub-safe flow, and
+`ArchitectureGrid` / `ArchitecturePhaseRail` cover dense stores and protocol
+phases.
+
+```tsx
+import {
+  ArchitectureCard,
+  ArchitectureEdge,
+  ArchitectureFrame,
+} from '@brett_lamy/viz-engine';
+
+<ArchitectureFrame w={1200} h={620} label="EVENT LOG" rightLabel="OFFSET 0043">
+  <ArchitectureEdge
+    from={{ x: 210, y: 220 }}
+    to={{ x: 520, y: 220 }}
+    label="APPEND"
+    tone="blue"
+    flow={writeU}
+  />
+  <ArchitectureCard x={210} y={220} label="WRITER" meta="CLIENT" tone="green" />
+  <ArchitectureCard x={520} y={220} label="STREAM" meta="APPEND-ONLY" tone="blue" />
+</ArchitectureFrame>
+```
+
+All primitives are deterministic SVG: drive `u` and `flow` from the timeline,
+and seeking produces the same diagram at the same sampled time.
+
 ## Video player
 
 `VizPlayer` is included in this package. Give it a `Timeline` and a render
