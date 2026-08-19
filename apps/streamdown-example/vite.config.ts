@@ -1,4 +1,5 @@
 import path from "path"
+import { almostnodePlugin } from "@agent-wasm/core/vite"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
@@ -8,7 +9,7 @@ const workspaceRoot = path.resolve(__dirname, "../..")
 export default defineConfig({
   root: __dirname,
   envDir: workspaceRoot,
-  plugins: [react(), tailwindcss()],
+  plugins: [almostnodePlugin(), react(), tailwindcss()],
   resolve: {
     alias: [
       {

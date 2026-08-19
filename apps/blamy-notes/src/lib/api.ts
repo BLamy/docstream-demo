@@ -3,6 +3,24 @@ export interface Profile {
   orgs: Array<{ login: string; avatar: string }>
 }
 
+export interface RepoInfo {
+  full_name: string
+  private: boolean
+}
+
+export type Plan = "free" | "pro"
+
+export interface Billing {
+  plan: Plan
+  proPrice: { unitAmount: number; currency: string } | null
+}
+
+export interface RepoShare {
+  id: string
+  repo: string
+  createdAt: string
+}
+
 export interface RepoTree {
   branch: string
   ref?: string
@@ -59,7 +77,7 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   githubProfile: () => http<Profile>("/github/profile"),
-  githubRepos: () => http<string[]>("/github/repos"),
+  githubRepos: () => http<RepoInfo[]>("/github/repos"),
   repoTree: (repo: string) => http<RepoTree>(`/github/repos/${repoPath(repo)}/tree`),
   repoFile: (repo: string, path: string) =>
     http<RepoFile>(`/github/repos/${repoPath(repo)}/file?path=${encodeURIComponent(path)}`),
@@ -81,5 +99,28 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  login: (username: string, password: string) =>
+    http<{ ok: true }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
   logout: () => http<{ ok: true }>("/auth/logout", { method: "POST" }),
+
+  billing: () => http<Billing>("/billing"),
+  billingCheckout: () =>
+    http<{ url: string }>("/billing/checkout", { method: "POST", body: "{}" }),
+  billingConfirm: (sessionId: string) =>
+    http<{ plan: Plan; paymentStatus: string }>("/billing/confirm", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    }),
+
+  shares: () => http<{ shares: RepoShare[] }>("/shares"),
+  createShare: (repo: string) =>
+    http<{ share: RepoShare }>("/shares", {
+      method: "POST",
+      body: JSON.stringify({ repo }),
+    }),
+  deleteShare: (id: string) =>
+    http<{ ok: true }>(`/shares/${encodeURIComponent(id)}`, { method: "DELETE" }),
 }

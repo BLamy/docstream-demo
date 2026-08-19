@@ -1,0 +1,12 @@
+[submodule "emulate"]
+	path = emulate
+	url = https://github.com/BLamy/emulate.git
+[submodule "packages/docstream"]
+	path = packages/docstream
+	url = git@github.com:BLamy/docstream.git
+[submodule "packages/docstream-editor"]
+	path = packages/docstream-editor
+	url = git@github.com:BLamy/docstream-editor.git
+[submodule "packages/viz-engine"]
+	path = packages/viz-engine
+	url = git@github.com:BLamy/viz-engine.git

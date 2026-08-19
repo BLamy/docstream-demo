@@ -1,4 +1,14 @@
+# Seed config for the BLamy/emulate fork (git submodule at ./emulate).
+# Start everything with: npm run dev:emulate
+#
+# Services:
+#   github  http://127.0.0.1:4300  — repos backing the notes editor
+#   auth0   http://127.0.0.1:4301  — login (password-realm) + JWKS + refresh
+#   stripe  http://127.0.0.1:4302  — Pro plan checkout + webhook events
+
 github:
+  port: 4300
+  baseUrl: http://127.0.0.1:4300
   users:
     - login: blamy
       name: Brett Lamy
@@ -12,3 +22,60 @@ github:
       name: loop-qa
       language: TypeScript
       auto_init: true
+    - owner: blamy
+      name: secret-notes
+      description: Private engineering notes
+      language: TypeScript
+      private: true
+      auto_init: true
+
+auth0:
+  port: 4301
+  baseUrl: http://127.0.0.1:4301
+  connections:
+    - name: Username-Password-Authentication
+      strategy: auth0
+  users:
+    - email: testuser@auth0.local
+      app_metadata:
+        github_token: local_blamy_token
+    - email: brett@blamy.dev
+      password: DemoPass123!
+      email_verified: true
+      given_name: Brett
+      family_name: Lamy
+      name: Brett Lamy
+      # Stand-in for Auth0 Token Vault: the user's GitHub token rides along as
+      # a namespaced JWT claim (see token_claim_mappings) that the API prefers
+      # over a live Token Vault exchange.
+      app_metadata:
+        github_token: local_blamy_token
+  token_claim_mappings:
+    github_token: https://blamy-notes.local/github_token
+  oauth_clients:
+    - client_id: blamy-notes-local
+      client_secret: blamy-notes-local-secret
+      name: Blamy Notes (local)
+      grant_types:
+        - authorization_code
+        - http://auth0.com/oauth/grant-type/password-realm
+        - refresh_token
+      redirect_uris:
+        - http://localhost:8899
+
+stripe:
+  port: 4302
+  baseUrl: http://127.0.0.1:4302
+  products:
+    - name: Blamy Notes Pro
+      description: Publish public docs sites from private GitHub repos
+  prices:
+    - id: price_blamy_pro
+      product_name: Blamy Notes Pro
+      unit_amount: 1200
+      currency: usd
+  webhooks:
+    # Matches the dev-stack app port (scripts/dev-stack.mjs).
+    - url: http://localhost:8899/api/billing/webhook
+      events: [checkout.session.completed]
+      secret: whsec_blamy_local

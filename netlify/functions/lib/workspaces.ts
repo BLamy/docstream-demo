@@ -1,11 +1,14 @@
 import type { PGlite, PGliteOptions } from "@electric-sql/pglite"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import type { PgliteDatabase } from "drizzle-orm/pglite"
 import { pgTable, text } from "drizzle-orm/pg-core"
 
 export const accounts = pgTable("accounts", {
   id: text("id").primaryKey(),
   auth0Sub: text("auth0_sub").notNull().unique(),
+  plan: text("plan").notNull().default("free"),
+  planUpdatedAt: text("plan_updated_at"),
+  stripeCustomerId: text("stripe_customer_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 })
@@ -22,7 +25,22 @@ export const workspaces = pgTable("workspaces", {
   updatedAt: text("updated_at").notNull(),
 })
 
-const schema = { accounts, workspaces }
+// A repo published as public docs. The stored credential lets anonymous
+// visitors read the (possibly private) repo: the owner's GitHub token when
+// the session carried one directly (emulated Token Vault), otherwise the
+// Auth0 refresh token to exchange through Token Vault on demand.
+export const repoShares = pgTable("repo_shares", {
+  id: text("id").primaryKey(),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  repo: text("repo").notNull().unique(),
+  githubToken: text("github_token"),
+  vaultRefreshToken: text("vault_refresh_token"),
+  createdAt: text("created_at").notNull(),
+})
+
+const schema = { accounts, workspaces, repoShares }
 
 type PGliteArtifacts = Pick<
   PGliteOptions,
@@ -116,6 +134,19 @@ async function migrate() {
       created_at text not null,
       updated_at text not null
     );
+
+    alter table accounts add column if not exists plan text not null default 'free';
+    alter table accounts add column if not exists plan_updated_at text;
+    alter table accounts add column if not exists stripe_customer_id text;
+
+    create table if not exists repo_shares (
+      id text primary key,
+      account_id text not null references accounts(id) on delete cascade,
+      repo text not null unique,
+      github_token text,
+      vault_refresh_token text,
+      created_at text not null
+    );
   `)
 }
 
@@ -138,10 +169,13 @@ function workspaceSlug(auth0Sub: string) {
   return slug ? `workspace-${slug}` : `workspace-${id("acct").slice(-12)}`
 }
 
+export type Plan = "free" | "pro"
+
 export interface AccountWorkspace {
   account: {
     id: string
     auth0Sub: string
+    plan: Plan
   }
   workspace: {
     id: string
@@ -158,6 +192,7 @@ export async function ensureAccountWorkspace(auth0Sub: string): Promise<AccountW
     .select({
       accountId: accounts.id,
       accountAuth0Sub: accounts.auth0Sub,
+      accountPlan: accounts.plan,
       workspaceId: workspaces.id,
       workspaceSlug: workspaces.slug,
       workspaceName: workspaces.name,
@@ -170,7 +205,11 @@ export async function ensureAccountWorkspace(auth0Sub: string): Promise<AccountW
   const found = existing[0]
   if (found?.workspaceId && found.workspaceSlug && found.workspaceName) {
     return {
-      account: { id: found.accountId, auth0Sub: found.accountAuth0Sub },
+      account: {
+        id: found.accountId,
+        auth0Sub: found.accountAuth0Sub,
+        plan: found.accountPlan as Plan,
+      },
       workspace: {
         id: found.workspaceId,
         slug: found.workspaceSlug,
@@ -180,7 +219,9 @@ export async function ensureAccountWorkspace(auth0Sub: string): Promise<AccountW
   }
 
   const now = new Date().toISOString()
-  const account =
+  // Concurrent first-requests race to create the account; the loser of the
+  // insert re-reads the winner's row.
+  let account =
     found ??
     (
       await db
@@ -191,11 +232,27 @@ export async function ensureAccountWorkspace(auth0Sub: string): Promise<AccountW
           createdAt: now,
           updatedAt: now,
         })
+        .onConflictDoNothing()
         .returning({
           accountId: accounts.id,
           accountAuth0Sub: accounts.auth0Sub,
+          accountPlan: accounts.plan,
         })
     )[0]
+
+  account ??= (
+    await db
+      .select({
+        accountId: accounts.id,
+        accountAuth0Sub: accounts.auth0Sub,
+        accountPlan: accounts.plan,
+      })
+      .from(accounts)
+      .where(eq(accounts.auth0Sub, auth0Sub))
+      .limit(1)
+  )[0]
+
+  if (!account) throw new Error(`failed to create account for ${auth0Sub}`)
 
   const workspace = (
     await db
@@ -218,7 +275,11 @@ export async function ensureAccountWorkspace(auth0Sub: string): Promise<AccountW
 
   if (workspace) {
     return {
-      account: { id: account.accountId, auth0Sub: account.accountAuth0Sub },
+      account: {
+        id: account.accountId,
+        auth0Sub: account.accountAuth0Sub,
+        plan: account.accountPlan as Plan,
+      },
       workspace: {
         id: workspace.workspaceId,
         slug: workspace.workspaceSlug,
@@ -242,11 +303,106 @@ export async function ensureAccountWorkspace(auth0Sub: string): Promise<AccountW
   }
 
   return {
-    account: { id: account.accountId, auth0Sub: account.accountAuth0Sub },
+    account: {
+      id: account.accountId,
+      auth0Sub: account.accountAuth0Sub,
+      plan: account.accountPlan as Plan,
+    },
     workspace: {
       id: retry[0].workspaceId,
       slug: retry[0].workspaceSlug,
       name: retry[0].workspaceName,
     },
   }
+}
+
+export async function setAccountPlan(
+  accountId: string,
+  plan: Plan,
+  stripeCustomerId?: string | null
+): Promise<void> {
+  await ready()
+  const { db } = await getState()
+  const now = new Date().toISOString()
+  await db
+    .update(accounts)
+    .set({
+      plan,
+      planUpdatedAt: now,
+      updatedAt: now,
+      ...(stripeCustomerId !== undefined ? { stripeCustomerId } : {}),
+    })
+    .where(eq(accounts.id, accountId))
+}
+
+export interface RepoShare {
+  id: string
+  repo: string
+  createdAt: string
+}
+
+export async function listRepoShares(accountId: string): Promise<RepoShare[]> {
+  await ready()
+  const { db } = await getState()
+  return db
+    .select({ id: repoShares.id, repo: repoShares.repo, createdAt: repoShares.createdAt })
+    .from(repoShares)
+    .where(eq(repoShares.accountId, accountId))
+}
+
+export async function createRepoShare(opts: {
+  accountId: string
+  repo: string
+  githubToken?: string | null
+  vaultRefreshToken?: string | null
+}): Promise<RepoShare> {
+  await ready()
+  const { db } = await getState()
+  const now = new Date().toISOString()
+  const inserted = await db
+    .insert(repoShares)
+    .values({
+      id: id("share"),
+      accountId: opts.accountId,
+      repo: opts.repo,
+      githubToken: opts.githubToken ?? null,
+      vaultRefreshToken: opts.vaultRefreshToken ?? null,
+      createdAt: now,
+    })
+    .onConflictDoUpdate({
+      target: repoShares.repo,
+      set: {
+        githubToken: opts.githubToken ?? null,
+        vaultRefreshToken: opts.vaultRefreshToken ?? null,
+      },
+    })
+    .returning({ id: repoShares.id, repo: repoShares.repo, createdAt: repoShares.createdAt })
+  return inserted[0]
+}
+
+export async function deleteRepoShare(accountId: string, shareId: string): Promise<boolean> {
+  await ready()
+  const { db } = await getState()
+  const deleted = await db
+    .delete(repoShares)
+    .where(and(eq(repoShares.id, shareId), eq(repoShares.accountId, accountId)))
+    .returning({ id: repoShares.id })
+  return deleted.length > 0
+}
+
+/** Credential lookup for anonymous public reads of a shared repo. */
+export async function findRepoShare(
+  repo: string
+): Promise<{ githubToken: string | null; vaultRefreshToken: string | null } | null> {
+  await ready()
+  const { db } = await getState()
+  const rows = await db
+    .select({
+      githubToken: repoShares.githubToken,
+      vaultRefreshToken: repoShares.vaultRefreshToken,
+    })
+    .from(repoShares)
+    .where(eq(repoShares.repo, repo))
+    .limit(1)
+  return rows[0] ?? null
 }

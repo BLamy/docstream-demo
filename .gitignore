@@ -35,6 +35,9 @@ dist-ssr
 .wrangler
 .wrangler-dry-run
 
+# Local dev stack state (emulators + PGlite)
+.dev-stack
+
 # Playwright MCP artifacts
 .playwright-mcp
 
@@ -42,3 +45,9 @@ dist-ssr
 .dev.vars
 
 *.pem
+.playwright-cli
+
+# Browser session recordings are never committed — attach the MP4 to the
+# pull request instead (see .claude/skills/replayio SKILL.md, "MP4 Video
+# Contract"). Replay recording URLs carry the runtime evidence.
+recordings/
