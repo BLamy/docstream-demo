@@ -3,8 +3,7 @@
   "version": "0.0.1",
   "type": "module",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/*"
   ],
   "scripts": {
     "dev": "nx serve blamy-notes",
@@ -14,10 +13,12 @@
     "lint": "nx run-many -t lint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "roundtrip": "tsx scripts/roundtrip-test.ts",
-    "typecheck": "nx run-many -t typecheck",
+    "typecheck": "nx run-many -t typecheck -p blamy-notes streamdown-example",
     "preview": "nx preview blamy-notes"
   },
   "dependencies": {
+    "@agent-wasm/core": "^0.4.0",
+    "@brett_lamy/viz-engine": "^0.2.1",
     "@electric-sql/pglite": "^0.5.3",
     "@fontsource-variable/geist": "^5.2.9",
     "@netlify/blobs": "^10.7.9",
@@ -46,6 +47,7 @@
     "radix-ui": "^1.5.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "rrweb": "2.0.0-alpha.20",
     "shadcn": "^4.11.0",
     "sonner": "^2.0.7",
     "streamdown": "^2.5.0",
