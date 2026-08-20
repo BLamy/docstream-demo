@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
-@import "@brett_lamy/docstream/styles.css";
+@import "../../../packages/docstream/src/styles.css";
 
 @source "../../../packages/docstream/src";
 @source "../../../packages/docstream-editor/src";

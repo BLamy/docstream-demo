@@ -18,6 +18,34 @@ export default defineConfig({
         replacement: path.resolve(workspaceRoot, "packages/docstream/src/index.ts"),
       },
       {
+        find: /^@brett_lamy\/docstream\/assets$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/assets.ts"),
+      },
+      {
+        find: /^@brett_lamy\/docstream\/gitbook$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/gitbook/index.ts"),
+      },
+      {
+        find: /^@brett_lamy\/docstream\/openapi$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/openapi/OpenApiOperation.tsx"),
+      },
+      {
+        find: /^@brett_lamy\/docstream\/playground$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/playground/index.ts"),
+      },
+      {
+        find: /^@brett_lamy\/docstream\/replay$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/replay/index.ts"),
+      },
+      {
+        find: /^@brett_lamy\/docstream\/source$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/source/index.ts"),
+      },
+      {
+        find: /^@brett_lamy\/docstream\/video$/,
+        replacement: path.resolve(workspaceRoot, "packages/docstream/src/video/index.ts"),
+      },
+      {
         find: /^@brett_lamy\/docstream-editor$/,
         replacement: path.resolve(workspaceRoot, "packages/docstream-editor/src/index.ts"),
       },

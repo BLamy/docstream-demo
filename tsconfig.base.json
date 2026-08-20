@@ -19,6 +19,15 @@
     "paths": {
       "@/*": ["apps/blamy-notes/src/*"],
       "@brett_lamy/docstream": ["packages/docstream/src/index.ts"],
+      "@brett_lamy/docstream/assets": ["packages/docstream/src/assets.ts"],
+      "@brett_lamy/docstream/gitbook": ["packages/docstream/src/gitbook/index.ts"],
+      "@brett_lamy/docstream/openapi": ["packages/docstream/src/openapi/OpenApiOperation.tsx"],
+      "@brett_lamy/docstream/playground": ["packages/docstream/src/playground/index.ts"],
+      "@brett_lamy/docstream/replay": ["packages/docstream/src/replay/index.ts"],
+      "@brett_lamy/docstream/source": ["packages/docstream/src/source/index.ts"],
+      "@brett_lamy/docstream/video": ["packages/docstream/src/video/index.ts"],
+      "@brett_lamy/docstream/vite": ["packages/docstream/src/vite/index.ts"],
+      "@brett_lamy/docstream/viz": ["packages/docstream/src/viz/index.ts"],
       "@brett_lamy/docstream/*": ["packages/docstream/src/*"],
       "@brett_lamy/docstream-editor": ["packages/docstream-editor/src/index.ts"],
       "@brett_lamy/docstream-editor/*": ["packages/docstream-editor/src/*"]
